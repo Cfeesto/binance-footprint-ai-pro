@@ -1,0 +1,15 @@
+backtest/data/
+backtest/models/*.pkl
+backtest/models/*.joblib
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+.DS_Store
+android/.gradle/
+android/build/
+android/app/build/
+*.iml
+.idea/
+local.properties
