@@ -49,8 +49,19 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun loadHistory() = viewModelScope.launch(Dispatchers.IO) {
-        try { repo.fetchHistory().forEach { window.addLast(it) }
-              _state.value = _state.value.copy(klines = window.toList())
+        try {
+            repo.fetchHistory().forEach { window.addLast(it) }
+            // 用历史 K 线预填 fpDeque，无档位数据但保证图表一启动就有多根 candle
+            mu.withLock {
+                window.takeLast(13).forEach { kline ->
+                    fpDeque.addLast(FootprintCandle(
+                        openTime = kline.openTime, open = kline.open, high = kline.high,
+                        low = kline.low, close = kline.close, delta = 0f,
+                        levels = emptyList(), isClosed = true,
+                    ))
+                }
+            }
+            _state.value = _state.value.copy(klines = window.toList())
         } catch (_: Exception) {}
     }
 
