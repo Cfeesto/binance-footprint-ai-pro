@@ -53,6 +53,43 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // ── Walk-Forward 回测参考卡 ───────────────────────────────────────────
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors   = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
+            ) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Walk-Forward Backtest (reference)", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        BacktestStat("Win Rate",  "75.4%")
+                        BacktestStat("Profit F.", "3.06×")
+                        BacktestStat("Signals",   "4,952")
+                    }
+                    // Live vs. expected WR 对比
+                    if (account.totalTrades >= 10) {
+                        val wrDiff = winRate - 75.4f
+                        val diffColor = if (wrDiff >= 0) Color(0xFF00C853) else Color(0xFFD50000)
+                        Text(
+                            "Live WR ${"%.0f".format(winRate)}%  ${if (wrDiff >= 0) "+" else ""}${"%.1f".format(wrDiff)}% vs. backtest",
+                            color    = diffColor,
+                            fontSize = 11.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+                        )
+                    }
+                    // Lorentzian 披露
+                    HorizontalDivider(thickness = 0.5.dp)
+                    Text(
+                        "⚠ Lorentzian KNN (35% backtest weight) not deployed on Android — " +
+                        "app runs CatBoost 45% · XGBoost 35% · RF 20%",
+                        fontSize = 10.sp,
+                        color    = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                        lineHeight = 14.sp,
+                    )
+                }
+            }
+        }
+
         // ── 余额卡片 ──────────────────────────────────────────────────────────
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
@@ -146,6 +183,14 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
                 Text("Reset Paper Account  ($200 start)")
             }
         }
+    }
+}
+
+@Composable
+private fun BacktestStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+        Text(label, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f))
     }
 }
 

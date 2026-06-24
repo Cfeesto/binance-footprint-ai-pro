@@ -5,6 +5,14 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import com.footprintai.app.model.Signal
+
+data class InferenceOutput(
+    val signal:   Signal,
+    val ensemble: Float,
+    val probCat:  Float,
+    val probXgb:  Float,
+    val probRf:   Float,
+)
 import org.json.JSONObject
 import java.nio.FloatBuffer
 
@@ -23,8 +31,10 @@ class OnnxInferenceEngine(private val ctx: Context) {
     private lateinit var xgbSess:   OrtSession
     private lateinit var rfSess:    OrtSession
 
-    private var longThresh:  Float = 0.680f
-    private var shortThresh: Float = 0.211f
+    var longThresh:  Float = 0.680f
+        private set
+    var shortThresh: Float = 0.211f
+        private set
 
     // 默认权重（Lorentzian 权重已重新分配，见 export_onnx.py 注释）
     private var wCat: Float = 0.45f
@@ -63,9 +73,9 @@ class OnnxInferenceEngine(private val ctx: Context) {
 
     /**
      * 推断单个特征向量。
-     * @return Pair<Signal, Float>  信号 + ensemble 概率
+     * @return InferenceOutput  信号 + ensemble 概率 + 各模型概率
      */
-    fun infer(features: FloatArray): Pair<Signal, Float> {
+    fun infer(features: FloatArray): InferenceOutput {
         val shape    = longArrayOf(1, features.size.toLong())
         val buf      = FloatBuffer.wrap(features)
         val tensor   = OnnxTensor.createTensor(env, buf, shape)
@@ -84,7 +94,7 @@ class OnnxInferenceEngine(private val ctx: Context) {
             ensemble <= shortThresh -> Signal.SHORT
             else                    -> Signal.NEUTRAL
         }
-        return Pair(signal, ensemble)
+        return InferenceOutput(signal, ensemble, pCat, pXgb, pRf)
     }
 
     private fun runSession(sess: OrtSession, tensor: OnnxTensor, isCatboost: Boolean): Float {
