@@ -48,7 +48,7 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         ) {
             Column {
                 Text(
-                    text = "BTC/USDT · 1m",
+                    text = "ETH/USDT · 5m",
                     color = Color.White,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -79,7 +79,7 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         }
 
         // ── Footprint 图表 ──────────────────────────────────────────────────────
-        val candles = state.footprints.takeLast(8)
+        val candles = state.footprints.takeLast(12)
         if (candles.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = GREEN)

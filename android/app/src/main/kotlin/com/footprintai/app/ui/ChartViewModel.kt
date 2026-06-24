@@ -39,10 +39,10 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     private val window      = ArrayDeque<Kline>(300)
 
     // ponytail: single mutex guards all footprint state; upgrade to channel if perf needed
-    companion object { const val TICK = 10.0 }
+    companion object { const val TICK = 1.0 } // ETH: $1 per level
     private val mu         = Mutex()
     private val liveLevels = HashMap<Double, Pair<Float, Float>>()
-    private val fpDeque    = ArrayDeque<FootprintCandle>(12)
+    private val fpDeque    = ArrayDeque<FootprintCandle>(15)
 
     init {
         initEngine(); loadHistory(); collectLiveKlines(); collectClosedKlines(); collectAggTrades()
@@ -79,7 +79,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             .collect { kline ->
                 mu.withLock {
                     fpDeque.addLast(buildFootprint(kline, isClosed = true))
-                    if (fpDeque.size > 10) fpDeque.removeFirst()
+                    if (fpDeque.size > 13) fpDeque.removeFirst()
                     liveLevels.clear()
                 }
                 if (!_state.value.engineReady) return@collect

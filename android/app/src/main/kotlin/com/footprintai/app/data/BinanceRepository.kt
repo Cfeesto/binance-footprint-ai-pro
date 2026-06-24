@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -24,10 +25,11 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 class BinanceRepository(
-    val symbol: String = "btcusdt",
-    val interval: String = "1m",
+    val symbol: String = "ethusdt",
+    val interval: String = "5m",
 ) {
-    private val okhttp = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    // ponytail: no ping — Binance WS drops idle connections; reconnect via retry() on the flow instead
+    private val okhttp = OkHttpClient.Builder().build()
     private val moshi  = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
     private val klineAdapter = moshi.adapter(BinanceKlineMsg::class.java)
     private val tradeAdapter = moshi.adapter(AggTradeMsg::class.java)
@@ -43,7 +45,7 @@ class BinanceRepository(
             }
         )
         awaitClose { ws.cancel() }
-    }
+    }.retry() // 断线自动重连
 
     private fun klineFlow() = wsFlow("${symbol}@kline_$interval")
         .map { klineAdapter.fromJson(it) }.filter { it != null }.map { it!! }
