@@ -5,7 +5,6 @@ kotlin         = "2.0.21"
 compose-bom    = "2024.09.00"
 onnxruntime    = "1.19.2"
 vico           = "2.0.0-alpha.27"
-scarlet        = "0.1.12"
 okhttp         = "4.12.0"
 moshi          = "1.15.1"
 coroutines     = "1.8.1"
@@ -28,12 +27,6 @@ onnxruntime            = { group = "com.microsoft.onnxruntime", name = "onnxrunt
 # Vico charts (Compose)
 vico-compose           = { group = "com.patrykandpatrick.vico", name = "compose", version.ref = "vico" }
 vico-compose-m3        = { group = "com.patrykandpatrick.vico", name = "compose-m3", version.ref = "vico" }
-
-# Scarlet WebSocket
-scarlet                = { group = "com.tinder.scarlet", name = "scarlet", version.ref = "scarlet" }
-scarlet-websocket-okhttp = { group = "com.tinder.scarlet", name = "websocket-okhttp", version.ref = "scarlet" }
-scarlet-message-moshi  = { group = "com.tinder.scarlet", name = "message-adapter-moshi", version.ref = "scarlet" }
-scarlet-stream-coroutines = { group = "com.tinder.scarlet", name = "stream-adapter-coroutines", version.ref = "scarlet" }
 
 # OkHttp
 okhttp                 = { group = "com.squareup.okhttp3", name = "okhttp", version.ref = "okhttp" }

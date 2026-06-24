@@ -49,11 +49,7 @@ dependencies {
     implementation(libs.vico.compose)
     implementation(libs.vico.compose.m3)
 
-    // Scarlet + OkHttp WebSocket
-    implementation(libs.scarlet)
-    implementation(libs.scarlet.websocket.okhttp)
-    implementation(libs.scarlet.message.moshi)
-    implementation(libs.scarlet.stream.coroutines)
+    // OkHttp WebSocket
     implementation(libs.okhttp)
 
     // Moshi

@@ -3,14 +3,16 @@ package com.footprintai.app.data
 import com.footprintai.app.model.Kline
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
-import com.tinder.scarlet.Scarlet
-import com.tinder.scarlet.messageadapter.moshi.MoshiMessageAdapter
-import com.tinder.scarlet.streamadapter.coroutines.CoroutinesStreamAdapterFactory
-import com.tinder.scarlet.websocket.okhttp.newWebSocketFactory
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import java.util.concurrent.TimeUnit
 
 class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
@@ -21,50 +23,44 @@ class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
         .pingInterval(20, TimeUnit.SECONDS)
         .build()
 
-    private val moshi = Moshi.Builder()
+    private val adapter = Moshi.Builder()
         .addLast(KotlinJsonAdapterFactory())
         .build()
+        .adapter(BinanceKlineMsg::class.java)
 
-    private val scarlet = Scarlet.Builder()
-        .webSocketFactory(okhttp.newWebSocketFactory(url))
-        .addMessageAdapterFactory(MoshiMessageAdapter.Factory(moshi))
-        .addStreamAdapterFactory(CoroutinesStreamAdapterFactory())
-        .build()
+    // 原始 K 线消息流 — 每次 collect 开一条 WebSocket 连接
+    private fun klineFlow(): Flow<BinanceKlineMsg> = callbackFlow {
+        val ws = okhttp.newWebSocket(
+            Request.Builder().url(url).build(),
+            object : WebSocketListener() {
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    adapter.fromJson(text)?.let { trySend(it) }
+                }
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    close(t)
+                }
+            }
+        )
+        awaitClose { ws.cancel() }
+    }
 
-    private val service = scarlet.create<BinanceWsService>()
-
-    /** 只发出已关闭的 5m K 线（isClosed = true）— 触发推断 */
-    val closedKlines: Flow<Kline> = service.observeKline()
+    /** 只发出已关闭的 K 线 — 触发推断 */
+    val closedKlines: Flow<Kline> = klineFlow()
         .filter { it.k.isClosed }
-        .map { msg ->
-            val k = msg.k
-            val vol    = k.volume.toDouble()
-            val buyVol = k.buyVolume.toDouble()
-            Kline(
-                openTime  = k.openTime,
-                open      = k.open.toDouble(),
-                high      = k.high.toDouble(),
-                low       = k.low.toDouble(),
-                close     = k.close.toDouble(),
-                volume    = vol,
-                buyVolume = buyVol,
-                isClosed  = true,
-            )
-        }
+        .map { it.toKline() }
 
     /** 实时未关闭 K 线 — 用于图表更新 */
-    val liveKlines: Flow<Kline> = service.observeKline()
-        .map { msg ->
-            val k = msg.k
-            Kline(
-                openTime  = k.openTime,
-                open      = k.open.toDouble(),
-                high      = k.high.toDouble(),
-                low       = k.low.toDouble(),
-                close     = k.close.toDouble(),
-                volume    = k.volume.toDouble(),
-                buyVolume = k.buyVolume.toDouble(),
-                isClosed  = k.isClosed,
-            )
-        }
+    val liveKlines: Flow<Kline> = klineFlow()
+        .map { it.toKline() }
+
+    private fun BinanceKlineMsg.toKline() = Kline(
+        openTime  = k.openTime,
+        open      = k.open.toDouble(),
+        high      = k.high.toDouble(),
+        low       = k.low.toDouble(),
+        close     = k.close.toDouble(),
+        volume    = k.volume.toDouble(),
+        buyVolume = k.buyVolume.toDouble(),
+        isClosed  = k.isClosed,
+    )
 }
