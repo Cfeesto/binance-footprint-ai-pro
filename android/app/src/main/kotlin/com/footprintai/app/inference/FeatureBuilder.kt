@@ -128,8 +128,8 @@ object FeatureBuilder {
         val vwapDev = ((cur.close - vwap) / vwap).toFloat()
 
         // ── EMA-20 斜率（shift 5 bars，除以 close，无 ×100）──────────────────
-        val ema20     = ema(bars, 20)
-        val ema20Prev = ema(bars.dropLast(5), 20)
+        val ema20     = emaClose(bars, 20)
+        val ema20Prev = emaClose(bars.dropLast(5), 20)
         val ema20Slope = ((ema20 - ema20Prev) / cur.close).toFloat()
 
         // ── 区间位置（20 bar high/low，fraction，无 ×100）────────────────────
@@ -295,7 +295,7 @@ object FeatureBuilder {
         return e
     }
 
-    private fun ema(bars: List<Kline>, period: Int): Double = ema(bars.map { it.close }, period)
+    private fun emaClose(bars: List<Kline>, period: Int): Double = ema(bars.map { it.close }, period)
 
     private fun sign(x: Double) = when {
         x > 0 -> 1.0
