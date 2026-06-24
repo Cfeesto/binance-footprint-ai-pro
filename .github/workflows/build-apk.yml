@@ -19,6 +19,21 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Python for Backend
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Backend Dependencies
+        run: pip install -r backend/requirements.txt
+        working-directory: binance-footprint-ai-pro
+
+      - name: Start Backend Service (Simulated Deployment)
+        run: | 
+          nohup uvicorn backend.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo "BACKEND_URL=http://localhost:8000" >> $GITHUB_ENV
+        working-directory: binance-footprint-ai-pro
+
       - name: Decode keystore
         run: python3 -c "import base64,os; open('android/app/release.jks','wb').write(base64.b64decode(os.environ['KS']))"
         env:
@@ -35,7 +50,8 @@ jobs:
             -Pandroid.injected.signing.store.file=$GITHUB_WORKSPACE/android/app/release.jks \
             -Pandroid.injected.signing.store.password=$KEYSTORE_PASSWORD \
             -Pandroid.injected.signing.key.alias=$KEY_ALIAS \
-            -Pandroid.injected.signing.key.password=$KEY_PASSWORD
+            -Pandroid.injected.signing.key.password=$KEY_PASSWORD \
+            -PbackendUrl=$BACKEND_URL
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
