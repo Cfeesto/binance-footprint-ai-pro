@@ -18,7 +18,7 @@ import okhttp3.WebSocketListener
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
-class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
+class BinanceRepository(private val symbol: String = "ethusdt", private val interval: String = "5m") {
 
     private val url = "wss://stream.binance.com/ws/${symbol}@kline_$interval"
 
