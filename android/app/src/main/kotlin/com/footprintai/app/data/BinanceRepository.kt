@@ -1,5 +1,6 @@
 package com.footprintai.app.data
 
+import com.footprintai.app.BuildConfig
 import com.footprintai.app.model.Kline
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
@@ -10,122 +11,82 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
+import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.RequestBody.Companion.toRequestBody
-import org.json.JSONObject
-import com.footprintai.app.BuildConfig
 
-class BinanceRepository(private val symbol: String = "ethusdt", private val interval: String = "5m") {
-
+class BinanceRepository(
+    val symbol: String = "btcusdt",
+    val interval: String = "1m",
+) {
+    private val okhttp = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
+    private val moshi  = Moshi.Builder().addLast(KotlinJsonAdapterFactory()).build()
+    private val klineAdapter = moshi.adapter(BinanceKlineMsg::class.java)
+    private val tradeAdapter = moshi.adapter(AggTradeMsg::class.java)
     private val backendBaseUrl = BuildConfig.BACKEND_BASE_URL
     private val JSON = "application/json; charset=utf-8".toMediaType()
 
-    private val url = "wss://stream.binance.com/ws/${symbol}@kline_$interval"
-
-    private val okhttp = OkHttpClient.Builder()
-        .pingInterval(20, TimeUnit.SECONDS)
-        .build()
-
-    private val adapter = Moshi.Builder()
-        .addLast(KotlinJsonAdapterFactory())
-        .build()
-        .adapter(BinanceKlineMsg::class.java)
-
-    // 原始 K 线消息流 — 每次 collect 开一条 WebSocket 连接
-    private fun klineFlow(): Flow<BinanceKlineMsg> = callbackFlow {
+    private fun wsFlow(stream: String): Flow<String> = callbackFlow {
         val ws = okhttp.newWebSocket(
-            Request.Builder().url(url).build(),
+            Request.Builder().url("wss://stream.binance.com/ws/$stream").build(),
             object : WebSocketListener() {
-                override fun onMessage(webSocket: WebSocket, text: String) {
-                    adapter.fromJson(text)?.let { trySend(it) }
-                }
-                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                    close(t)
-                }
+                override fun onMessage(webSocket: WebSocket, text: String) { trySend(text) }
+                override fun onFailure(ws: WebSocket, t: Throwable, r: Response?) { close(t) }
             }
         )
         awaitClose { ws.cancel() }
     }
 
-    /** 只发出已关闭的 K 线 — 触发推断 */
-    val closedKlines: Flow<Kline> = klineFlow()
-        .filter { it.k.isClosed }
-        .map { it.toKline() }
+    private fun klineFlow() = wsFlow("${symbol}@kline_$interval")
+        .map { klineAdapter.fromJson(it) }.filter { it != null }.map { it!! }
 
-    /** 实时未关闭 K 线 — 用于图表更新 */
-    val liveKlines: Flow<Kline> = klineFlow()
-        .map { it.toKline() }
+    val closedKlines: Flow<Kline> = klineFlow().filter { it.k.isClosed }.map { it.toKline() }
+    val liveKlines:   Flow<Kline> = klineFlow().map { it.toKline() }
 
-    /** REST 预加载历史 K 线，启动时调用避免空图表 */
-    suspend fun fetchHistory(limit: Int = 200): List<Kline> {
-        val restUrl = "https://api.binance.com/api/v3/klines?symbol=${symbol.uppercase()}&interval=$interval&limit=$limit"
-        return withContext(Dispatchers.IO) {
-            val body = okhttp.newCall(Request.Builder().url(restUrl).build()).execute().body!!.string()
-            val arr = JSONArray(body)
-            (0 until arr.length()).map { i ->
-                val r = arr.getJSONArray(i)
-                Kline(
-                    openTime  = r.getLong(0),
-                    open      = r.getString(1).toDouble(),
-                    high      = r.getString(2).toDouble(),
-                    low       = r.getString(3).toDouble(),
-                    close     = r.getString(4).toDouble(),
-                    volume    = r.getString(5).toDouble(),
-                    buyVolume = r.getString(9).toDouble(),
-                    isClosed  = true,
-                )
-            }
+    val aggTrades: Flow<AggTradeMsg> = wsFlow("${symbol}@aggTrade")
+        .map { tradeAdapter.fromJson(it) }.filter { it != null }.map { it!! }
+
+    suspend fun fetchHistory(limit: Int = 200): List<Kline> = withContext(Dispatchers.IO) {
+        val url = "https://api.binance.com/api/v3/klines?symbol=${symbol.uppercase()}&interval=$interval&limit=$limit"
+        val body = okhttp.newCall(Request.Builder().url(url).build()).execute().body!!.string()
+        val arr = JSONArray(body)
+        (0 until arr.length()).map { i ->
+            val r = arr.getJSONArray(i)
+            Kline(r.getLong(0), r.getString(1).toDouble(), r.getString(2).toDouble(),
+                  r.getString(3).toDouble(), r.getString(4).toDouble(),
+                  r.getString(5).toDouble(), r.getString(9).toDouble(), isClosed = true)
         }
     }
 
-    suspend fun sendTradingSignal(signal: String, price: Double, timestamp: Long) {
-        withContext(Dispatchers.IO) {
-            val json = JSONObject()
-            json.put("symbol", symbol.uppercase())
-            json.put("signal", signal)
-            json.put("price", price)
-            json.put("timestamp", timestamp)
-            val body = json.toString().toRequestBody(JSON)
-            val request = Request.Builder()
-                .url("$backendBaseUrl/signal")
-                .post(body)
-                .build()
-            okhttp.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Unexpected code $response")
-                println("Signal sent: ${response.body?.string()}")
-            }
-        }
+    suspend fun sendTradingSignal(signal: String, price: Double, timestamp: Long) = withContext(Dispatchers.IO) {
+        val body = JSONObject().apply {
+            put("symbol", symbol.uppercase()); put("signal", signal)
+            put("price", price); put("timestamp", timestamp)
+        }.toString().toRequestBody(JSON)
+        okhttp.newCall(Request.Builder().url("$backendBaseUrl/signal").post(body).build())
+            .execute().use { if (!it.isSuccessful) throw IOException("Unexpected code $it") }
     }
 
-    suspend fun getAccountStatus(): String {
-        return withContext(Dispatchers.IO) {
-            val request = Request.Builder()
-                .url("$backendBaseUrl/account_status")
-                .get()
-                .build()
-            okhttp.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) throw IOException("Unexpected code $response")
-                response.body?.string() ?: "{}"
+    suspend fun getAccountStatus(): String = withContext(Dispatchers.IO) {
+        okhttp.newCall(Request.Builder().url("$backendBaseUrl/account_status").build())
+            .execute().use { r ->
+                if (!r.isSuccessful) throw IOException("Unexpected code $r")
+                r.body?.string() ?: "{}"
             }
-        }
     }
 
     private fun BinanceKlineMsg.toKline() = Kline(
-        openTime  = k.openTime,
-        open      = k.open.toDouble(),
-        high      = k.high.toDouble(),
-        low       = k.low.toDouble(),
-        close     = k.close.toDouble(),
-        volume    = k.volume.toDouble(),
-        buyVolume = k.buyVolume.toDouble(),
-        isClosed  = k.isClosed,
+        openTime  = k.openTime,  open      = k.open.toDouble(),
+        high      = k.high.toDouble(),  low = k.low.toDouble(),
+        close     = k.close.toDouble(), volume = k.volume.toDouble(),
+        buyVolume = k.buyVolume.toDouble(), isClosed = k.isClosed,
     )
 }

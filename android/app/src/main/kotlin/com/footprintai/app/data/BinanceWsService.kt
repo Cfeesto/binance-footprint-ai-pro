@@ -3,6 +3,15 @@ package com.footprintai.app.data
 import com.squareup.moshi.Json
 import com.squareup.moshi.JsonClass
 
+// ─── Binance WS aggTrade 消息结构 ──────────────────────────────────────────
+
+@JsonClass(generateAdapter = false)
+data class AggTradeMsg(
+    @Json(name = "p") val price: String,
+    @Json(name = "q") val qty: String,
+    @Json(name = "m") val isBuyerMaker: Boolean, // true=卖方主动, false=买方主动
+)
+
 // ─── Binance WS kline 消息结构 ─────────────────────────────────────────────
 
 @JsonClass(generateAdapter = false)
