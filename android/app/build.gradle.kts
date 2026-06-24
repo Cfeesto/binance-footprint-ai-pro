@@ -16,7 +16,7 @@ android {
         versionName         = "1.0"
 
         // Backend URL for live trading
-        buildConfigField "String", "BACKEND_BASE_URL", "\"${project.findProperty("backendUrl") ?: "http://localhost:8000"}\""
+        buildConfigField("String", "BACKEND_BASE_URL", "\"${project.findProperty("backendUrl") ?: "http://localhost:8000"}\"")
     }
 
     buildFeatures { 
