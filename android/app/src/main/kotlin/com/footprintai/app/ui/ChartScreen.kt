@@ -4,6 +4,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.*
@@ -13,6 +15,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -85,10 +88,22 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
                 CircularProgressIndicator(color = GREEN)
             }
         } else {
+            var scale  by remember { mutableFloatStateOf(1f) }
+            var offset by remember { mutableStateOf(Offset.Zero) }
+            val txState = rememberTransformableState { zoom, pan, _ ->
+                scale  = (scale * zoom).coerceIn(0.3f, 10f)
+                offset = Offset(offset.x + pan.x, offset.y + pan.y)
+            }
             FootprintChart(
                 candles  = candles,
                 signal   = state.lastResult?.signal,
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .transformable(txState)
+                    .graphicsLayer {
+                        scaleX = scale; scaleY = scale
+                        translationX = offset.x; translationY = offset.y
+                    },
             )
         }
     }

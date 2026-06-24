@@ -23,5 +23,10 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".TradingService"
+            android:foregroundServiceType="dataSync"
+            android:exported="false" />
+
     </application>
 </manifest>
