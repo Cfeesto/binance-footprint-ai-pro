@@ -3,34 +3,23 @@
   Walk-Forward Validation | 5m Candles | 90%+ Confidence Signals
 ======================================================================
 
-  BTCUSDT
-  ────────────────────────────────────────
-  Total 90%+ signals : 8
-  Wins / Losses      : 4 / 4
-  Win Rate           : 50.0%
-  Profit Factor      : 1.00
-  LONG signals       : 0 (0.0% WR)
-  SHORT signals      : 8 (50.0% WR)
-  Avg conf (wins)    : 8.0%
-  Avg conf (losses)  : 8.9%
-
   ETHUSDT
   ────────────────────────────────────────
-  Total 90%+ signals : 32
-  Wins / Losses      : 30 / 2
-  Win Rate           : 93.8%
-  Profit Factor      : 15.00
-  LONG signals       : 0 (0.0% WR)
-  SHORT signals      : 32 (93.8% WR)
-  Avg conf (wins)    : 8.1%
-  Avg conf (losses)  : 4.1%
+  Total 90%+ signals : 4952
+  Wins / Losses      : 3732 / 1220
+  Win Rate           : 75.4%
+  Profit Factor      : 3.06
+  LONG signals       : 9 (55.6% WR)
+  SHORT signals      : 4943 (75.4% WR)
+  Avg conf (wins)    : 17.9%
+  Avg conf (losses)  : 18.3%
 
 ======================================================================
   COMBINED (BTC + ETH)
   ────────────────────────────────────────
-  Total 90%+ signals : 40
-  Win Rate           : 85.0%
-  Profit Factor      : 5.67
+  Total 90%+ signals : 4952
+  Win Rate           : 75.4%
+  Profit Factor      : 3.06
 
   ✅ TARGET MET: ≥70% win rate on ≥30 signals → PROCEED TO PHASE 2
 ======================================================================

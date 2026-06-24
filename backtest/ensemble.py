@@ -11,6 +11,8 @@ Returns per-candle probability of NEXT candle being bullish.
 Ensemble signal = LONG if prob >= 0.90, SHORT if prob <= 0.10.
 """
 
+import json
+import os
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
@@ -28,8 +30,28 @@ WEIGHTS = {
     "rf":         0.10,
 }
 
+# Default thresholds — overridden by tune.py results if available
 SIGNAL_THRESHOLD_LONG  = 0.72
 SIGNAL_THRESHOLD_SHORT = 0.28
+
+_BEST_PARAMS_PATH = os.path.join(os.path.dirname(__file__), "results", "best_params.json")
+
+def _load_tuned_params() -> dict:
+    """Load Optuna-tuned params from results/best_params.json if it exists."""
+    if os.path.exists(_BEST_PARAMS_PATH):
+        with open(_BEST_PARAMS_PATH) as f:
+            p = json.load(f)
+        print(f"  [ensemble] Loaded tuned params from {_BEST_PARAMS_PATH}")
+        return p
+    return {}
+
+_TUNED = _load_tuned_params()
+
+# Override thresholds with tuned values if available
+if "long_thresh" in _TUNED:
+    SIGNAL_THRESHOLD_LONG  = _TUNED["long_thresh"]
+    SIGNAL_THRESHOLD_SHORT = _TUNED["short_thresh"]
+    print(f"  [ensemble] Thresholds → LONG >= {SIGNAL_THRESHOLD_LONG:.3f}, SHORT <= {SIGNAL_THRESHOLD_SHORT:.3f}")
 
 
 # ─── Lorentzian Classification ────────────────────────────────────────────────
@@ -90,9 +112,10 @@ class LorentzianClassifier:
 
 def build_catboost(random_state: int = 42) -> CatBoostClassifier:
     return CatBoostClassifier(
-        depth=6,
-        iterations=500,
-        learning_rate=0.05,
+        depth=int(_TUNED.get("cat_depth", 6)),
+        iterations=int(_TUNED.get("cat_iter", 500)),
+        learning_rate=_TUNED.get("cat_lr", 0.05),
+        l2_leaf_reg=_TUNED.get("cat_l2", 3.0),
         early_stopping_rounds=50,
         eval_metric="AUC",
         random_seed=random_state,
@@ -104,11 +127,11 @@ def build_catboost(random_state: int = 42) -> CatBoostClassifier:
 
 def build_xgboost(random_state: int = 42) -> XGBClassifier:
     return XGBClassifier(
-        max_depth=5,
-        n_estimators=300,
-        learning_rate=0.05,
-        subsample=0.8,
-        colsample_bytree=0.8,
+        max_depth=int(_TUNED.get("xgb_depth", 5)),
+        n_estimators=int(_TUNED.get("xgb_n", 300)),
+        learning_rate=_TUNED.get("xgb_lr", 0.05),
+        subsample=_TUNED.get("xgb_sub", 0.8),
+        colsample_bytree=_TUNED.get("xgb_col", 0.8),
         eval_metric="logloss",
         random_state=random_state,
         n_jobs=-1,
@@ -118,10 +141,9 @@ def build_xgboost(random_state: int = 42) -> XGBClassifier:
 
 def build_rf(random_state: int = 42) -> RandomForestClassifier:
     return RandomForestClassifier(
-        n_estimators=200,
-        max_depth=8,
-        min_samples_split=20,
-        min_samples_leaf=10,
+        n_estimators=int(_TUNED.get("rf_n", 200)),
+        max_depth=int(_TUNED.get("rf_depth", 8)),
+        min_samples_leaf=int(_TUNED.get("rf_leaf", 10)),
         class_weight="balanced",
         random_state=random_state,
         n_jobs=-1,
