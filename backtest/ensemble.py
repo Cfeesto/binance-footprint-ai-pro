@@ -224,7 +224,7 @@ class FourModelEnsemble:
         result["ensemble_prob"] = ensemble
 
         result["signal"] = "NONE"
-        result.loc[ensemble >= SIGNAL_THRESHOLD_LONG,  "signal"] = "LONG"
+        # LONG disabled: only 9 signals at 55.6% WR — statistically meaningless
         result.loc[ensemble <= SIGNAL_THRESHOLD_SHORT, "signal"] = "SHORT"
 
         # Win = direction predicted matches next candle's direction

@@ -27,15 +27,18 @@ class PaperTradeEngine(private val store: PaperTradeStore) {
     // ── 信号处理（每根已关闭 K 线触发）────────────────────────────────────────
 
     fun onSignal(signal: Signal, closePrice: Double, timestamp: Long) {
+        // LONG disabled: 9 signals at 55.6% WR is noise
+        if (signal == Signal.LONG) return
+
         var acc = account
         val pos = acc.openPosition
 
         when {
-            // 无持仓 + 有方向信号 → 开新仓
-            pos == null && signal != Signal.NEUTRAL -> {
+            // 无持仓 + SHORT 信号 → 开空
+            pos == null && signal == Signal.SHORT -> {
                 acc = acc.withOpen(signal, closePrice, timestamp)
             }
-            // 有持仓 + 反向信号 → 平仓并开新仓
+            // 有持仓 + 反向信号 → 平仓并开新仓（保留逻辑，以防将来启用 LONG）
             pos != null && signal != Signal.NEUTRAL && signal != pos.direction -> {
                 acc = acc.withClose(closePrice, timestamp, CloseReason.SIGNAL_FLIP)
                     .withOpen(signal, closePrice, timestamp)
