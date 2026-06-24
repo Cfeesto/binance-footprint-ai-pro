@@ -20,7 +20,9 @@ jobs:
           distribution: 'temurin'
 
       - name: Decode keystore
-        run: echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > android/app/release.jks
+        run: python3 -c "import base64,os; open('android/app/release.jks','wb').write(base64.b64decode(os.environ['KS']))"
+        env:
+          KS: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Build release APK
         working-directory: android
