@@ -80,18 +80,13 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
             SignalBadge(state.lastResult?.signal, state.lastResult?.prob)
         }
 
-        // ── Candlestick + Volume Chart ───────────────────────────────────────
-        CartesianChartHost(
-            chart = rememberCartesianChart(
-                rememberCandlestickCartesianLayer(),
-                rememberColumnCartesianLayer(),
-                startAxis = rememberStartAxis(),
-                bottomAxis = rememberBottomAxis(),
-            ),
-            modelProducer = producer,
+        // ── Footprint Chart ──────────────────────────────────────────────────
+        FootprintChart(
+            klines = state.klines.takeLast(10), // Show last 10 for better visibility in 9:16
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f),
+                .weight(1f)
+                .padding(vertical = 8.dp)
         )
 
         // ── Status / error ───────────────────────────────────────────────────
@@ -109,21 +104,27 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         }
 
         // ── Live Trading Status ────────────────────────────────────────────────
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1E2329))
         ) {
-            Text(
-                text = "Open Position: $openPosition",
-                style = MaterialTheme.typography.bodyLarge,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary
-            )
-            Text(
-                text = "Daily Trades: $dailyWinLoss",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
-            )
+            Column(
+                modifier = Modifier.padding(12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text(
+                    text = "Open Position: $openPosition",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color(0xFFF0B90B) // Binance Yellow
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "Daily Performance: $dailyWinLoss",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Color.White.copy(alpha = 0.8f)
+                )
+            }
         }
     }
 }
