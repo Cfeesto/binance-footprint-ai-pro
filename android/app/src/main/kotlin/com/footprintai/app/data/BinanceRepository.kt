@@ -3,16 +3,19 @@ package com.footprintai.app.data
 import com.footprintai.app.model.Kline
 import com.squareup.moshi.Moshi
 import com.squareup.moshi.kotlin.reflect.KotlinJsonAdapterFactory
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import org.json.JSONArray
 import java.util.concurrent.TimeUnit
 
 class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
@@ -52,6 +55,26 @@ class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
     /** 实时未关闭 K 线 — 用于图表更新 */
     val liveKlines: Flow<Kline> = klineFlow()
         .map { it.toKline() }
+
+    /** REST 预加载历史 K 线，启动时调用避免空图表 */
+    suspend fun fetchHistory(limit: Int = 200): List<Kline> = withContext(Dispatchers.IO) {
+        val restUrl = "https://api.binance.com/api/v3/klines?symbol=${symbol.uppercase()}&interval=$interval&limit=$limit"
+        val body = okhttp.newCall(Request.Builder().url(restUrl).build()).execute().body!!.string()
+        val arr = JSONArray(body)
+        (0 until arr.length()).map { i ->
+            val r = arr.getJSONArray(i)
+            Kline(
+                openTime  = r.getLong(0),
+                open      = r.getString(1).toDouble(),
+                high      = r.getString(2).toDouble(),
+                low       = r.getString(3).toDouble(),
+                close     = r.getString(4).toDouble(),
+                volume    = r.getString(5).toDouble(),
+                buyVolume = r.getString(9).toDouble(),
+                isClosed  = true,
+            )
+        }
+    }
 
     private fun BinanceKlineMsg.toKline() = Kline(
         openTime  = k.openTime,

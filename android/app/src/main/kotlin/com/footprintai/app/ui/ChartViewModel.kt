@@ -39,8 +39,16 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         initEngine()
+        loadHistory()
         collectLiveKlines()
         collectClosedKlines()
+    }
+
+    private fun loadHistory() = viewModelScope.launch(Dispatchers.IO) {
+        try {
+            repo.fetchHistory().forEach { window.addLast(it) }
+            _state.value = _state.value.copy(klines = window.toList())
+        } catch (_: Exception) { /* WS will fill in */ }
     }
 
     private fun initEngine() = viewModelScope.launch(Dispatchers.IO) {
