@@ -25,9 +25,13 @@ import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
 import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
 import com.patrykandpatrick.vico.core.cartesian.data.candlestickSeries
 import com.patrykandpatrick.vico.core.cartesian.data.columnSeries
+import org.json.JSONObject
 
 @Composable
 fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier) {
+    val accountBalance by vm.accountBalance.collectAsStateWithLifecycle()
+    val openPosition by vm.openPosition.collectAsStateWithLifecycle()
+    val dailyWinLoss by vm.dailyWinLoss.collectAsStateWithLifecycle()
     val state by vm.state.collectAsStateWithLifecycle()
 
     // Vico model producer — 更新时重新 build
@@ -61,11 +65,18 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
             horizontalArrangement = Arrangement.SpaceBetween,
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
         ) {
-            Text(
-                text  = "ETH/USDT · 5m",
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground,
-            )
+            Column {
+                Text(
+                    text  = "ETH/USDT · 5m",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onBackground,
+                )
+                Text(
+                    text  = "Balance: $accountBalance",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.7f),
+                )
+            }
             SignalBadge(state.lastResult?.signal, state.lastResult?.prob)
         }
 
@@ -95,6 +106,24 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
 
         if (!state.engineReady) {
             LinearProgressIndicator(modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+        }
+
+        // ── Live Trading Status ────────────────────────────────────────────────
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Text(
+                text = "Open Position: $openPosition",
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary
+            )
+            Text(
+                text = "Daily Trades: $dailyWinLoss",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.8f)
+            )
         }
     }
 }

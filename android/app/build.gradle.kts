@@ -14,9 +14,15 @@ android {
         targetSdk           = 35
         versionCode         = 1
         versionName         = "1.0"
+
+        // Backend URL for live trading
+        buildConfigField "String", "BACKEND_BASE_URL", "\"${project.findProperty("backendUrl") ?: "http://localhost:8000"}\""
     }
 
-    buildFeatures { compose = true }
+    buildFeatures { 
+        compose = true 
+        buildConfig = true
+    }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

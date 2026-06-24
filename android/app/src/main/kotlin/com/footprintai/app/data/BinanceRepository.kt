@@ -17,8 +17,15 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import org.json.JSONArray
 import java.util.concurrent.TimeUnit
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONObject
+import com.footprintai.app.BuildConfig
 
 class BinanceRepository(private val symbol: String = "ethusdt", private val interval: String = "5m") {
+
+    private val backendBaseUrl = BuildConfig.BACKEND_BASE_URL
+    private val JSON = "application/json; charset=utf-8".toMediaType()
 
     private val url = "wss://stream.binance.com/ws/${symbol}@kline_$interval"
 
@@ -74,6 +81,38 @@ class BinanceRepository(private val symbol: String = "ethusdt", private val inte
                     buyVolume = r.getString(9).toDouble(),
                     isClosed  = true,
                 )
+            }
+        }
+    }
+
+    suspend fun sendTradingSignal(signal: String, price: Double, timestamp: Long) {
+        withContext(Dispatchers.IO) {
+            val json = JSONObject()
+            json.put("symbol", symbol.uppercase())
+            json.put("signal", signal)
+            json.put("price", price)
+            json.put("timestamp", timestamp)
+            val body = json.toString().toRequestBody(JSON)
+            val request = Request.Builder()
+                .url("$backendBaseUrl/signal")
+                .post(body)
+                .build()
+            okhttp.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Unexpected code $response")
+                println("Signal sent: ${response.body?.string()}")
+            }
+        }
+    }
+
+    suspend fun getAccountStatus(): String {
+        return withContext(Dispatchers.IO) {
+            val request = Request.Builder()
+                .url("$backendBaseUrl/account_status")
+                .get()
+                .build()
+            okhttp.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) throw IOException("Unexpected code $response")
+                response.body?.string() ?: "{}"
             }
         }
     }

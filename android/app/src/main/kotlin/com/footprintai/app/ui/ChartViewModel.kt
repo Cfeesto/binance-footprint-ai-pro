@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 data class ChartState(
     val klines:       List<Kline>        = emptyList(),
@@ -31,17 +32,48 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(ChartState())
     val state: StateFlow<ChartState> = _state.asStateFlow()
 
+    val accountBalance = MutableStateFlow("-")
+    val openPosition = MutableStateFlow("-")
+    val dailyWinLoss = MutableStateFlow("-")
+
     private val repo        = BinanceRepository(symbol = "ethusdt", interval = "5m")
+
     private val engine      = OnnxInferenceEngine(app)
     private val paperEngine = PaperTradeEngine(PaperTradeStore(app))
 
     private val window = ArrayDeque<Kline>(200)
+
+    private suspend fun updateAccountStatus() {
+        val statusJson = JSONObject(repo.getAccountStatus())
+        accountBalance.value = String.format("$%.2f", statusJson.getDouble("balance"))
+
+        val openPositionsJson = statusJson.getJSONObject("open_positions")
+        if (openPositionsJson.length() > 0) {
+            val symbol = openPositionsJson.keys().next()
+            val position = openPositionsJson.getJSONObject(symbol)
+            openPosition.value = "${position.getString("side")} ${symbol.replace("USDT", "/USDT")}"
+        } else {
+            openPosition.value = "No Open Position"
+        }
+
+        val tradeHistory = statusJson.getJSONArray("trade_history")
+        var wins = 0
+        var losses = 0
+        for (i in 0 until tradeHistory.length()) {
+            val trade = tradeHistory.getJSONObject(i)
+            if (trade.getString("type") == "EXIT") {
+                if (trade.getDouble("pnl") > 0) wins++ else losses++
+            }
+        }
+        dailyWinLoss.value = "Wins: $wins, Losses: $losses"
+    }
 
     init {
         initEngine()
         loadHistory()
         collectLiveKlines()
         collectClosedKlines()
+        viewModelScope.launch { updateAccountStatus() }
     }
 
     private fun loadHistory() = viewModelScope.launch(Dispatchers.IO) {
@@ -92,12 +124,12 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                 val features = FeatureBuilder.build(window.toList()) ?: return@collect
                 val (signal, prob) = engine.infer(features)
 
-                // 信号 → 纸仓引擎
-                paperEngine.onSignal(signal, kline.close, kline.openTime)
+                // Send signal to backend for live trading
+                repo.sendTradingSignal(signal.name, kline.close, kline.openTime)
+                updateAccountStatus()
 
                 _state.value = _state.value.copy(
                     lastResult   = InferenceResult(signal, prob, kline),
-                    paperAccount = paperEngine.state,
                 )
             }
     }
