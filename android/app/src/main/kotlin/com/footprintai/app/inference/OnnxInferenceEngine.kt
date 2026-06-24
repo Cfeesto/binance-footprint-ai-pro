@@ -5,6 +5,8 @@ import ai.onnxruntime.OrtEnvironment
 import ai.onnxruntime.OrtSession
 import android.content.Context
 import com.footprintai.app.model.Signal
+import org.json.JSONObject
+import java.nio.FloatBuffer
 
 data class InferenceOutput(
     val signal:   Signal,
@@ -13,8 +15,6 @@ data class InferenceOutput(
     val probXgb:  Float,
     val probRf:   Float,
 )
-import org.json.JSONObject
-import java.nio.FloatBuffer
 
 /**
  * OnnxInferenceEngine
