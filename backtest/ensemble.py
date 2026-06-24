@@ -28,8 +28,8 @@ WEIGHTS = {
     "rf":         0.10,
 }
 
-SIGNAL_THRESHOLD_LONG  = 0.90
-SIGNAL_THRESHOLD_SHORT = 0.10
+SIGNAL_THRESHOLD_LONG  = 0.72
+SIGNAL_THRESHOLD_SHORT = 0.28
 
 
 # ─── Lorentzian Classification ────────────────────────────────────────────────

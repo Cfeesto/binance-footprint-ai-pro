@@ -39,7 +39,7 @@ from ensemble  import FourModelEnsemble
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "results")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 
-SYMBOLS       = ["BTCUSDT", "ETHUSDT"]
+SYMBOLS       = ["ETHUSDT"]
 TRAIN_MONTHS  = 4   # Reduced to get more folds from 12 months of data
 TEST_MONTHS   = 1
 STEP_MONTHS   = 1

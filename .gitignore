@@ -1,6 +1,8 @@
 backtest/data/
 backtest/models/*.pkl
 backtest/models/*.joblib
+backtest/venv/
+backtest/catboost_info/
 __pycache__/
 *.pyc
 .env

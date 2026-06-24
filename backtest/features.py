@@ -15,10 +15,10 @@ def add_footprint_features(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     vol = df["volume"].replace(0, np.nan)
 
-    # Core footprint ratios
-    df["buy_ratio"]   = df["buy_volume"] / vol
-    df["sell_ratio"]  = df["sell_volume"] / vol
-    df["delta_ratio"] = df["delta"] / vol           # [-1, +1]
+    # Core footprint ratios（零成交量时填充中性值，避免NaN传播）
+    df["buy_ratio"]   = (df["buy_volume"] / vol).fillna(0.5)
+    df["sell_ratio"]  = (df["sell_volume"] / vol).fillna(0.5)
+    df["delta_ratio"] = (df["delta"] / vol).fillna(0.0)       # [-1, +1]
 
     # Cumulative volume delta
     df["cvd_5"]  = df["delta"].rolling(5).sum()
@@ -42,12 +42,12 @@ def add_footprint_features(df: pd.DataFrame) -> pd.DataFrame:
     df["delta_div_bear"] = (price_up  & (df["delta"] < 0)).astype(float)
     df["delta_div_bull"] = (price_dn  & (df["delta"] > 0)).astype(float)
 
-    # Candle structure
+    # Candle structure（doji K线 high=low 时，wick/body 填0，避免NaN）
     candle_range = (df["high"] - df["low"]).replace(0, np.nan)
-    df["candle_range_pct"] = candle_range / df["close"]
-    df["body_ratio"]       = (df["close"] - df["open"]).abs() / candle_range
-    df["upper_wick"]       = (df["high"] - df[["open","close"]].max(axis=1)) / candle_range
-    df["lower_wick"]       = (df[["open","close"]].min(axis=1) - df["low"]) / candle_range
+    df["candle_range_pct"] = (candle_range / df["close"]).fillna(0.0)
+    df["body_ratio"]       = ((df["close"] - df["open"]).abs() / candle_range).fillna(0.0)
+    df["upper_wick"]       = ((df["high"] - df[["open","close"]].max(axis=1)) / candle_range).fillna(0.0)
+    df["lower_wick"]       = ((df[["open","close"]].min(axis=1) - df["low"]) / candle_range).fillna(0.0)
 
     # Stacked imbalance proxy: consecutive candles with same delta direction
     delta_sign = np.sign(df["delta"])
@@ -67,6 +67,44 @@ def add_footprint_features(df: pd.DataFrame) -> pd.DataFrame:
     sell_roll5 = df["sell_volume"].rolling(5).mean()
     df["buy_sell_momentum"] = (buy_roll5 - sell_roll5) / (buy_roll5 + sell_roll5).replace(0, np.nan)
 
+    # ── 清算代理特征 (Liquidation Proxy Features) ──────────────────────────────
+    # 下影线 × 放量 → 空头被清算（看多信号）
+    df["liq_short_proxy"] = df["lower_wick"] * df["volume_spike"]
+    # 上影线 × 放量 → 多头被清算（看空信号）
+    df["liq_long_proxy"]  = df["upper_wick"] * df["volume_spike"]
+    # 净清算压力：正值 = 空头被清算多，负值 = 多头被清算多
+    df["liq_net"]         = df["liq_short_proxy"] - df["liq_long_proxy"]
+    # 大单方向力度：放量时的 delta 方向
+    df["vol_spike_delta"] = df["volume_spike"] * df["delta_ratio"]
+    # CVD 加速度：过去5根K线的CVD变化速度
+    df["cvd_accel"]       = df["cvd_5"] - df["cvd_5"].shift(5)
+    # 价格动量（5根 & 20根 K线涨跌幅）
+    df["price_mom_5"]  = df["close"].pct_change(5)
+    df["price_mom_20"] = df["close"].pct_change(20)
+
+    # ── VWAP 偏离特征 ─────────────────────────────────────────────────────────
+    # 滚动20根K线近似 VWAP，保留更多训练数据
+    typical = (df["high"] + df["low"] + df["close"]) / 3
+    roll20_tvol = (typical * df["volume"]).rolling(20).sum()
+    roll20_vol  = df["volume"].rolling(20).sum().replace(0, np.nan)
+    vwap_20     = roll20_tvol / roll20_vol
+    df["vwap_dev"] = (df["close"] - vwap_20) / vwap_20   # 偏离度
+
+    # ── 趋势斜率特征 ──────────────────────────────────────────────────────────
+    ema20 = df["close"].ewm(span=20, adjust=False).mean()
+    df["ema20_slope"] = (ema20 - ema20.shift(5)) / df["close"]
+
+    # ── 区间位置特征 ──────────────────────────────────────────────────────────
+    # 20根K线内高低点位置 [0=最低, 1=最高]
+    high20 = df["high"].rolling(20).max()
+    low20  = df["low"].rolling(20).min()
+    df["range_pos_20"]     = (df["close"] - low20) / (high20 - low20).replace(0, np.nan)
+    df["dist_from_high20"] = (high20 - df["close"]) / df["close"]
+    df["dist_from_low20"]  = (df["close"] - low20) / df["close"]
+
+    # ── 买压一致性（buy_ratio 已填充0.5，rolling std 不会产生NaN）────────────
+    df["buy_ratio_std10"] = df["buy_ratio"].rolling(10).std().fillna(0.0)
+
     return df
 
 
@@ -82,7 +120,8 @@ def add_rsi(df: pd.DataFrame, period: int = 14) -> pd.DataFrame:
     loss  = (-delta).clip(lower=0)
     avg_gain = gain.ewm(com=period - 1, adjust=False).mean()
     avg_loss = loss.ewm(com=period - 1, adjust=False).mean()
-    rs = avg_gain / avg_loss.replace(0, np.nan)
+    # 用极小值替代0，避免强趋势时产生 NaN 导致大量数据丢失
+    rs = avg_gain / avg_loss.clip(lower=1e-10)
     df["rsi14"] = 100 - (100 / (1 + rs))
     df["rsi14_norm"] = (df["rsi14"] - 50) / 50   # [-1, +1] centred
     return df
@@ -196,12 +235,23 @@ FEATURE_COLS = [
     "wt1_norm", "wt_diff",
     "macd_hist_norm", "atr14_pct",
     "bb_pos", "bb_width_pct",
+    # 清算代理特征
+    "liq_short_proxy", "liq_long_proxy", "liq_net",
+    "vol_spike_delta", "cvd_accel",
+    "price_mom_5", "price_mom_20",
+    # VWAP + 趋势 + 区间位置
+    "vwap_dev", "ema20_slope", "range_pos_20",
+    "dist_from_high20", "dist_from_low20",
+    # 买压一致性
+    "buy_ratio_std10",
 ]
 
-# Subset used by Lorentzian KNN (original 4 features + 2 footprint)
+# Subset used by Lorentzian KNN
 LORENTZIAN_COLS = [
     "rsi14_norm", "wt1_norm", "cci20_norm", "adx14_norm",
     "delta_ratio", "buy_ratio",
+    "liq_net", "vol_spike_delta",
+    "vwap_dev", "ema20_slope",
 ]
 
 
@@ -224,7 +274,7 @@ def build_features(df: pd.DataFrame) -> pd.DataFrame:
 
 if __name__ == "__main__":
     from fetch_data import load_or_fetch
-    raw = load_or_fetch("BTCUSDT")
+    raw = load_or_fetch("ETHUSDT")
     df  = build_features(raw)
     print(f"Features built: {len(df):,} rows, {len(FEATURE_COLS)} features")
     print(df[FEATURE_COLS].describe().round(3))
