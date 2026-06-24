@@ -146,32 +146,27 @@ private fun FootprintChart(
         }
 
         candles.forEachIndexed { i, candle ->
-            val x      = i * colW
-            val isLive = !candle.isClosed
-            val isBull = candle.close >= candle.open
+            val x       = i * colW
+            val isLive  = !candle.isClosed
+            val isBull  = candle.close >= candle.open
             val bodyClr = if (isBull) GREEN else RED
 
-            val openY  = py(candle.open)
-            val closeY = py(candle.close)
-            val highY  = py(candle.high)
-            val lowY   = py(candle.low)
+            val highY = py(candle.high)
+            val lowY  = py(candle.low)
 
-            // 信号背景高亮（仅实时 candle）
-            if (isLive && signal != null) {
-                val sigClr = when (signal) {
-                    Signal.LONG    -> GREEN.copy(alpha = 0.08f)
-                    Signal.SHORT   -> RED.copy(alpha = 0.08f)
-                    Signal.NEUTRAL -> Color.White.copy(alpha = 0.04f)
-                }
-                drawRect(sigClr, Offset(x, 0f), Size(colW, chartH))
+            // SHORT-only: only highlight live candle on SHORT signal
+            if (isLive && signal == Signal.SHORT) {
+                drawRect(RED.copy(alpha = 0.08f), Offset(x, 0f), Size(colW, chartH))
             }
 
             // Wick
             drawLine(bodyClr.copy(alpha = 0.6f), Offset(x + colW / 2, highY), Offset(x + colW / 2, lowY), 1.5f)
 
-            val levelRowH = (tickSize / priceRange * chartH).toFloat().coerceAtLeast(1f)
-
             if (candle.levels.isNotEmpty()) {
+                // POC = level with highest total volume
+                val pocPrice  = candle.levels.maxByOrNull { it.buyVol + it.sellVol }?.price
+                val maxLvlVol = candle.levels.maxOf { it.buyVol + it.sellVol }.coerceAtLeast(0.0001f)
+
                 candle.levels.forEach level@{ level ->
                     if (level.price < candle.low - tickSize || level.price > candle.high + tickSize) return@level
 
@@ -179,58 +174,71 @@ private fun FootprintChart(
                     val rowBot = py(level.price)
                     val rH = (rowBot - rowTop).coerceAtLeast(1f)
 
-                    val bgClr = if (level.isBuyDominant) GREEN.copy(alpha = 0.75f) else RED.copy(alpha = 0.75f)
+                    // 成交量强度决定透明度（低量=淡，高量=实）
+                    val intensity = ((level.buyVol + level.sellVol) / maxLvlVol).coerceIn(0.15f, 1f)
+                    val bgAlpha   = 0.25f + 0.6f * intensity
+                    val bgClr     = if (level.isBuyDominant) GREEN.copy(alpha = bgAlpha) else RED.copy(alpha = bgAlpha)
                     drawRect(bgClr, Offset(x + 1f, rowTop), Size(colW - 2f, rH))
 
-                    if (rH >= 8f) {
-                        val vol = if (level.isBuyDominant) level.buyVol else level.sellVol
-                        val measured = textMeasurer.measure(
-                            "%.2f".format(vol),
-                            TextStyle(fontSize = 7.sp, color = Color.White, fontFamily = FontFamily.Monospace)
+                    // 失衡高亮：一侧 ≥3× 另一侧 → 金色边框
+                    val s = level.sellVol; val b = level.buyVol
+                    val isImbalance = (s > 0 && b > 0) && (b / s >= 3f || s / b >= 3f)
+                    if (isImbalance) {
+                        drawRect(Color(0xFFFFD700).copy(alpha = 0.55f), Offset(x + 1f, rowTop), Size(colW - 2f, rH))
+                    }
+
+                    // POC 黄线
+                    if (level.price == pocPrice) {
+                        drawLine(Color(0xFFFFD700), Offset(x, rowTop), Offset(x + colW, rowTop), 1.5f)
+                    }
+
+                    // Bid×Ask 文字："sell × buy"
+                    if (rH >= 9f) {
+                        val txt = "%.1f×%.1f".format(s, b)
+                        val tm  = textMeasurer.measure(
+                            txt, TextStyle(fontSize = 7.sp, color = Color.White, fontFamily = FontFamily.Monospace)
                         )
-                        if (measured.size.width < colW - 4 && measured.size.height <= rH) {
-                            drawText(measured, topLeft = Offset(
-                                x + (colW - measured.size.width) / 2,
-                                rowTop + (rH - measured.size.height) / 2,
+                        if (tm.size.width < colW - 4 && tm.size.height <= rH) {
+                            drawText(tm, topLeft = Offset(
+                                x + (colW - tm.size.width) / 2,
+                                rowTop + (rH - tm.size.height) / 2,
                             ))
                         }
                     }
                 }
             } else {
-                // 历史 candle 无档位数据 — 画普通实体
+                // 历史 candle 无档位 — 普通实体
+                val openY   = py(candle.open)
+                val closeY  = py(candle.close)
                 val bodyTop = minOf(openY, closeY)
                 val bodyH   = (maxOf(openY, closeY) - bodyTop).coerceAtLeast(2f)
-                drawRect(bodyClr.copy(alpha = 0.9f), Offset(x + 2f, bodyTop), Size(colW - 4f, bodyH))
+                drawRect(bodyClr.copy(alpha = 0.85f), Offset(x + 2f, bodyTop), Size(colW - 4f, bodyH))
             }
 
-            // Delta 标签
+            // Delta 标签（candle 顶部）
             if (candle.delta != 0f) {
                 val dClr = if (candle.delta >= 0) GREEN else RED
                 val dm = textMeasurer.measure(
-                    "${if (candle.delta >= 0) "+" else ""}${"%.2f".format(candle.delta)}",
-                    TextStyle(fontSize = 8.sp, color = dClr, fontWeight = FontWeight.Bold)
+                    "${if (candle.delta >= 0) "+" else ""}${"%.1f".format(candle.delta)}",
+                    TextStyle(fontSize = 7.sp, color = dClr, fontWeight = FontWeight.Bold)
                 )
                 drawText(dm, topLeft = Offset(x + (colW - dm.size.width) / 2, highY - dm.size.height - 2))
             }
 
-            // 实时 candle 信号标签
-            if (isLive && signal != null && signal != Signal.NEUTRAL) {
-                val sigClr  = if (signal == Signal.LONG) GREEN else RED
-                val sigText = if (signal == Signal.LONG) "▲ LONG" else "▼ SHORT"
-                val sm = textMeasurer.measure(sigText, TextStyle(
-                    fontSize = 11.sp, color = sigClr, fontWeight = FontWeight.Bold))
+            // SHORT 信号标签（仅实时 candle）
+            if (isLive && signal == Signal.SHORT) {
+                val sm = textMeasurer.measure("▼ SHORT", TextStyle(
+                    fontSize = 11.sp, color = RED, fontWeight = FontWeight.Bold))
                 drawText(sm, topLeft = Offset(
-                    x + (colW - sm.size.width) / 2,
-                    chartH / 2 - sm.size.height / 2,
-                ))
+                    x + (colW - sm.size.width) / 2, chartH / 2 - sm.size.height / 2))
             }
 
             // 时间标签（最后 candle）
             if (i == candles.lastIndex) {
-                val ts  = candle.openTime
-                val hh  = (ts / 3_600_000 % 24).toString().padStart(2, '0')
-                val mm  = (ts / 60_000 % 60).toString().padStart(2, '0')
-                val tm  = textMeasurer.measure("$hh:$mm", TextStyle(fontSize = 9.sp, color = AXIS_TXT))
+                val ts = candle.openTime
+                val hh = (ts / 3_600_000 % 24).toString().padStart(2, '0')
+                val mm = (ts / 60_000    % 60).toString().padStart(2, '0')
+                val tm = textMeasurer.measure("$hh:$mm", TextStyle(fontSize = 9.sp, color = AXIS_TXT))
                 drawText(tm, topLeft = Offset(x + (colW - tm.size.width) / 2, chartH + 4))
             }
         }
@@ -239,11 +247,10 @@ private fun FootprintChart(
 
 @Composable
 private fun SignalBadge(signal: Signal?, prob: Float?) {
+    // ponytail: LONG filtered out — strategy is SHORT-only
     val (label, color) = when (signal) {
-        Signal.LONG    -> "▲ LONG"  to GREEN
         Signal.SHORT   -> "▼ SHORT" to RED
-        Signal.NEUTRAL -> "─ WAIT"  to Color(0xFF9E9E9E)
-        null           -> "…"       to Color(0xFF9E9E9E)
+        else           -> "─ WAIT"  to Color(0xFF9E9E9E)
     }
     val animColor by animateColorAsState(color, tween(400), label = "sig")
     Box(

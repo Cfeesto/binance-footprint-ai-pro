@@ -112,7 +112,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                 val features = FeatureBuilder.build(window.toList()) ?: return@collect
                 val (signal, prob) = engine.infer(features)
                 paperEngine.onSignal(signal, kline.close, kline.openTime)
-                if (signal != Signal.NEUTRAL) notifySignal(signal, kline.close)
+                if (signal == Signal.SHORT) notifySignal(signal, kline.close)
                 try { repo.sendTradingSignal(signal.name, kline.close, kline.openTime) } catch (_: Exception) {}
                 _state.value = _state.value.copy(
                     lastResult   = InferenceResult(signal, prob, kline),
