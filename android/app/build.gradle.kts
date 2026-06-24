@@ -36,6 +36,7 @@ dependencies {
     implementation(bom)
     implementation(libs.compose.ui)
     implementation(libs.compose.material3)
+    implementation(libs.compose.icons.extended)
     implementation(libs.compose.activity)
     implementation(libs.compose.lifecycle)
     implementation(libs.viewmodel.compose)

@@ -27,7 +27,7 @@ import com.patrykandpatrick.vico.core.cartesian.data.candlestickSeries
 import com.patrykandpatrick.vico.core.cartesian.data.columnSeries
 
 @Composable
-fun ChartScreen(vm: ChartViewModel = viewModel()) {
+fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier) {
     val state by vm.state.collectAsStateWithLifecycle()
 
     // Vico model producer — 更新时重新 build
@@ -50,7 +50,7 @@ fun ChartScreen(vm: ChartViewModel = viewModel()) {
     }
 
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
             .padding(horizontal = 8.dp, vertical = 16.dp)
