@@ -79,7 +79,7 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         }
 
         // ── Footprint 图表 ──────────────────────────────────────────────────────
-        val candles = state.footprints.takeLast(12)
+        val candles = state.footprints.takeLast(20)
         if (candles.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = GREEN)

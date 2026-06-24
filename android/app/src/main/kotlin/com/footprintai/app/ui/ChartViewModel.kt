@@ -1,6 +1,9 @@
 package com.footprintai.app.ui
 
 import android.app.Application
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.footprintai.app.data.BinanceRepository
@@ -33,7 +36,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(ChartState())
     val state: StateFlow<ChartState> = _state.asStateFlow()
 
-    private val repo        = BinanceRepository()   // btcusdt / 1m
+    private val repo        = BinanceRepository()   // ethusdt / 5m
     private val engine      = OnnxInferenceEngine(app)
     private val paperEngine = PaperTradeEngine(PaperTradeStore(app))
     private val window      = ArrayDeque<Kline>(300)
@@ -42,18 +45,30 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     companion object { const val TICK = 1.0 } // ETH: $1 per level
     private val mu         = Mutex()
     private val liveLevels = HashMap<Double, Pair<Float, Float>>()
-    private val fpDeque    = ArrayDeque<FootprintCandle>(15)
+    private val fpDeque    = ArrayDeque<FootprintCandle>(22)
 
-    init {
-        initEngine(); loadHistory(); collectLiveKlines(); collectClosedKlines(); collectAggTrades()
+    private val nm = app.getSystemService(NotificationManager::class.java).also {
+        it.createNotificationChannel(
+            NotificationChannel("signals", "Trade Signals", NotificationManager.IMPORTANCE_HIGH)
+        )
     }
 
-    private fun loadHistory() = viewModelScope.launch(Dispatchers.IO) {
+    init {
+        // 先加载历史再开 WS，避免图表空列竞态
+        viewModelScope.launch(Dispatchers.IO) {
+            initEngine()
+            loadHistory()
+            collectLiveKlines()
+            collectClosedKlines()
+            collectAggTrades()
+        }
+    }
+
+    private suspend fun loadHistory() {
         try {
             repo.fetchHistory().forEach { window.addLast(it) }
-            // 用历史 K 线预填 fpDeque，无档位数据但保证图表一启动就有多根 candle
             mu.withLock {
-                window.takeLast(13).forEach { kline ->
+                window.takeLast(21).forEach { kline ->
                     fpDeque.addLast(FootprintCandle(
                         openTime = kline.openTime, open = kline.open, high = kline.high,
                         low = kline.low, close = kline.close, delta = 0f,
@@ -65,7 +80,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         } catch (_: Exception) {}
     }
 
-    private fun initEngine() = viewModelScope.launch(Dispatchers.IO) {
+    private suspend fun initEngine() {
         try {
             engine.init()
             _state.value = _state.value.copy(engineReady = true, paperAccount = paperEngine.state)
@@ -90,14 +105,14 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             .collect { kline ->
                 mu.withLock {
                     fpDeque.addLast(buildFootprint(kline, isClosed = true))
-                    if (fpDeque.size > 13) fpDeque.removeFirst()
+                    if (fpDeque.size > 21) fpDeque.removeFirst()
                     liveLevels.clear()
                 }
                 if (!_state.value.engineReady) return@collect
                 val features = FeatureBuilder.build(window.toList()) ?: return@collect
                 val (signal, prob) = engine.infer(features)
                 paperEngine.onSignal(signal, kline.close, kline.openTime)
-                // 发送信号到后端
+                if (signal != Signal.NEUTRAL) notifySignal(signal, kline.close)
                 try { repo.sendTradingSignal(signal.name, kline.close, kline.openTime) } catch (_: Exception) {}
                 _state.value = _state.value.copy(
                     lastResult   = InferenceResult(signal, prob, kline),
@@ -133,6 +148,21 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                               .sortedByDescending { it.price },
         isClosed = isClosed,
     )
+
+    private fun notifySignal(signal: Signal, price: Double) {
+        val ctx = getApplication<Application>()
+        val (title, text) = when (signal) {
+            Signal.LONG  -> "▲ LONG Signal" to "ETH/USDT \$%.1f".format(price)
+            Signal.SHORT -> "▼ SHORT Signal" to "ETH/USDT \$%.1f".format(price)
+            else -> return
+        }
+        nm.notify(signal.ordinal, Notification.Builder(ctx, "signals")
+            .setSmallIcon(android.R.drawable.ic_dialog_alert)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setAutoCancel(true)
+            .build())
+    }
 
     fun resetPaperAccount() {
         paperEngine.reset()
