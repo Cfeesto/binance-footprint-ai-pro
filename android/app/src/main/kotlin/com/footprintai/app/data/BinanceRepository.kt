@@ -57,22 +57,24 @@ class BinanceRepository(symbol: String = "ethusdt", interval: String = "5m") {
         .map { it.toKline() }
 
     /** REST 预加载历史 K 线，启动时调用避免空图表 */
-    suspend fun fetchHistory(limit: Int = 200): List<Kline> = withContext(Dispatchers.IO) {
+    suspend fun fetchHistory(limit: Int = 200): List<Kline> {
         val restUrl = "https://api.binance.com/api/v3/klines?symbol=${symbol.uppercase()}&interval=$interval&limit=$limit"
-        val body = okhttp.newCall(Request.Builder().url(restUrl).build()).execute().body!!.string()
-        val arr = JSONArray(body)
-        (0 until arr.length()).map { i ->
-            val r = arr.getJSONArray(i)
-            Kline(
-                openTime  = r.getLong(0),
-                open      = r.getString(1).toDouble(),
-                high      = r.getString(2).toDouble(),
-                low       = r.getString(3).toDouble(),
-                close     = r.getString(4).toDouble(),
-                volume    = r.getString(5).toDouble(),
-                buyVolume = r.getString(9).toDouble(),
-                isClosed  = true,
-            )
+        return withContext(Dispatchers.IO) {
+            val body = okhttp.newCall(Request.Builder().url(restUrl).build()).execute().body!!.string()
+            val arr = JSONArray(body)
+            (0 until arr.length()).map { i ->
+                val r = arr.getJSONArray(i)
+                Kline(
+                    openTime  = r.getLong(0),
+                    open      = r.getString(1).toDouble(),
+                    high      = r.getString(2).toDouble(),
+                    low       = r.getString(3).toDouble(),
+                    close     = r.getString(4).toDouble(),
+                    volume    = r.getString(5).toDouble(),
+                    buyVolume = r.getString(9).toDouble(),
+                    isClosed  = true,
+                )
+            }
         }
     }
 
