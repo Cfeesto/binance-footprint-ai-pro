@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 data class ChartState(
@@ -43,8 +44,10 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
 
     private val window = ArrayDeque<Kline>(200)
 
-    private suspend fun updateAccountStatus() {
-        val statusJson = JSONObject(repo.getAccountStatus())
+    private suspend fun updateAccountStatus() = withContext(Dispatchers.IO) {
+        try {
+            val statusStr = repo.getAccountStatus()
+            val statusJson = JSONObject(statusStr)
         accountBalance.value = String.format("$%.2f", statusJson.getDouble("balance"))
 
         val openPositionsJson = statusJson.getJSONObject("open_positions")
@@ -66,6 +69,9 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         dailyWinLoss.value = "Wins: $wins, Losses: $losses"
+        } catch (e: Exception) {
+            dailyWinLoss.value = "Status Unavailable"
+        }
     }
 
     init {

@@ -33,7 +33,8 @@ class OnnxInferenceEngine(private val ctx: Context) {
 
     /** 必须在后台线程调用 */
     fun init() {
-        env = OrtEnvironment.getEnvironment()
+        try {
+            env = OrtEnvironment.getEnvironment()
 
         val opts = OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(2)
@@ -54,6 +55,9 @@ class OnnxInferenceEngine(private val ctx: Context) {
                 wXgb = w.getDouble("xgboost").toFloat()
                 wRf  = w.getDouble("rf").toFloat()
             }
+        }
+        } catch (e: Exception) {
+            throw RuntimeException("Inference Engine Init Error: ${e.message}")
         }
     }
 
