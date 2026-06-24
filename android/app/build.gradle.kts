@@ -61,4 +61,8 @@ dependencies {
 
     // Coroutines
     implementation(libs.coroutines.android)
+
+    // Unit tests
+    testImplementation(libs.junit)
+    testImplementation(libs.json)
 }

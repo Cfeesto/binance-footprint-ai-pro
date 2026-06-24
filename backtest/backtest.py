@@ -44,6 +44,9 @@ TRAIN_MONTHS  = 4   # Reduced to get more folds from 12 months of data
 TEST_MONTHS   = 1
 STEP_MONTHS   = 1
 
+# Binance taker fee per side. Round-trip = 2×. BNB discount not assumed.
+TAKER_FEE     = 0.0004   # 0.04%
+
 
 # ─── Walk-Forward Engine ──────────────────────────────────────────────────────
 
@@ -117,25 +120,37 @@ def compute_metrics(results: pd.DataFrame) -> dict:
     long_wr  = long_sigs["won"].mean()  if len(long_sigs)  > 0 else 0.0
     short_wr = short_sigs["won"].mean() if len(short_sigs) > 0 else 0.0
 
-    # Profit factor: assume 1:1 risk/reward
+    # Gross profit factor (1:1 R:R, no fees)
     pf = wins / losses if losses > 0 else float("inf")
+
+    # Fee-adjusted profit factor
+    # SL = 3%, TP = 6% → avg exit move ≈ WR×6% + (1-WR)×3% = 1R unit
+    # Fee = 2 × TAKER_FEE per round-trip, as fraction of 1R (using SL as 1R)
+    SL_PCT   = 0.03
+    fee_per_r = (2 * TAKER_FEE) / SL_PCT          # fee drag per 1R unit
+    gross_wins   = float(wins)
+    gross_losses = float(losses)
+    net_wins   = gross_wins   * (1.0 - fee_per_r)  # win nets (1 - fee) R
+    net_losses = gross_losses * (1.0 + fee_per_r)  # loss costs (1 + fee) R
+    pf_net = net_wins / net_losses if net_losses > 0 else float("inf")
 
     # Avg confidence on winning vs losing signals
     avg_conf_win  = signals[signals["won"] == 1]["ensemble_prob"].mean()
     avg_conf_loss = signals[signals["won"] == 0]["ensemble_prob"].mean()
 
     return {
-        "total_signals":  len(signals),
-        "wins":           int(wins),
-        "losses":         int(losses),
-        "win_rate":       round(win_rate, 4),
-        "profit_factor":  round(pf, 3),
-        "long_signals":   len(long_sigs),
-        "short_signals":  len(short_sigs),
-        "long_win_rate":  round(long_wr, 4),
-        "short_win_rate": round(short_wr, 4),
-        "avg_conf_win":   round(avg_conf_win, 4)  if not np.isnan(avg_conf_win)  else 0.0,
-        "avg_conf_loss":  round(avg_conf_loss, 4) if not np.isnan(avg_conf_loss) else 0.0,
+        "total_signals":     len(signals),
+        "wins":              int(wins),
+        "losses":            int(losses),
+        "win_rate":          round(win_rate, 4),
+        "profit_factor":     round(pf, 3),
+        "profit_factor_net": round(pf_net, 3),   # after 0.08% round-trip fee
+        "long_signals":      len(long_sigs),
+        "short_signals":     len(short_sigs),
+        "long_win_rate":     round(long_wr, 4),
+        "short_win_rate":    round(short_wr, 4),
+        "avg_conf_win":      round(avg_conf_win, 4)  if not np.isnan(avg_conf_win)  else 0.0,
+        "avg_conf_loss":     round(avg_conf_loss, 4) if not np.isnan(avg_conf_loss) else 0.0,
     }
 
 
@@ -154,8 +169,8 @@ def print_report(all_results: dict, per_symbol: dict):
         lines.append(f"  Total 90%+ signals : {m['total_signals']}")
         lines.append(f"  Wins / Losses      : {m['wins']} / {m['losses']}")
         lines.append(f"  Win Rate           : {m['win_rate']*100:.1f}%")
-        lines.append(f"  Profit Factor      : {m['profit_factor']:.2f}")
-        lines.append(f"  LONG signals       : {m['long_signals']} ({m['long_win_rate']*100:.1f}% WR)")
+        lines.append(f"  Profit Factor      : {m['profit_factor']:.2f}  (net after fees: {m['profit_factor_net']:.2f})")
+        lines.append(f"  LONG signals       : {m['long_signals']} ({m['long_win_rate']*100:.1f}% WR)  [disabled]")
         lines.append(f"  SHORT signals      : {m['short_signals']} ({m['short_win_rate']*100:.1f}% WR)")
         lines.append(f"  Avg conf (wins)    : {m['avg_conf_win']*100:.1f}%")
         lines.append(f"  Avg conf (losses)  : {m['avg_conf_loss']*100:.1f}%")
@@ -167,7 +182,7 @@ def print_report(all_results: dict, per_symbol: dict):
     cm = compute_metrics(pd.concat(list(all_results.values())))
     lines.append(f"  Total 90%+ signals : {cm['total_signals']}")
     lines.append(f"  Win Rate           : {cm['win_rate']*100:.1f}%")
-    lines.append(f"  Profit Factor      : {cm['profit_factor']:.2f}")
+    lines.append(f"  Profit Factor      : {cm['profit_factor']:.2f}  (net after fees: {cm['profit_factor_net']:.2f})")
 
     target_met = cm["win_rate"] >= 0.70 and cm["total_signals"] >= 30
     lines.append("")

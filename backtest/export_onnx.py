@@ -1,16 +1,17 @@
 """
 export_onnx.py
 --------------
-Train ensemble on full dataset, export each sklearn-compatible model to ONNX.
-CatBoost and XGBoost use their native ONNX exporters.
-RF uses skl2onnx.
+Train ensemble on full dataset, export each model to real ONNX.
+  CatBoost  → native .save_model(format="onnx")
+  XGBoost   → onnxmltools.convert_xgboost  (fixes the UBJSON bug)
+  RF        → skl2onnx.convert_sklearn
 
 Outputs to results/:
   catboost.onnx
   xgboost.onnx
   rf.onnx
   feature_names.json   ← ordered list Android reads to build input tensor
-  thresholds.json      ← long/short thresholds from best_params.json
+  thresholds.json      ← short threshold + model weights (LONG disabled)
 """
 
 import json, os, sys
@@ -65,13 +66,22 @@ cat.save_model(cat_path, format="onnx",
                                    "onnx_model_version": 1})
 print(f"  Saved {cat_path}")
 
-# ── XGBoost → native ONNX ────────────────────────────────────────────────────
+# ── XGBoost → real ONNX via onnxmltools ──────────────────────────────────────
+# save_model("*.onnx") silently writes XGBoost native UBJSON — not real ONNX.
+# onnxmltools is the correct converter.
 print("\nTraining XGBoost...")
 xgb = build_xgboost()
 xgb.fit(X_tr, y_tr, eval_set=[(X_val, y_val)], verbose=False)
 
+from onnxmltools import convert_xgboost
+from onnxmltools.convert.common.data_types import FloatTensorType as OnnxFloat
+xgb_onnx = convert_xgboost(
+    xgb.get_booster(), "xgboost",
+    [("float_input", OnnxFloat([None, len(FEATURE_COLS)]))]
+)
 xgb_path = os.path.join(RESULTS, "xgboost.onnx")
-xgb.get_booster().save_model(xgb_path)
+with open(xgb_path, "wb") as f:
+    f.write(xgb_onnx.SerializeToString())
 print(f"  Saved {xgb_path}")
 
 # ── Random Forest → skl2onnx ─────────────────────────────────────────────────

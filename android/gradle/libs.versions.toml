@@ -1,5 +1,6 @@
 [versions]
 agp            = "8.5.2"
+junit          = "4.13.2"
 kotlin         = "2.0.21"
 compose-bom    = "2024.09.00"
 onnxruntime    = "1.19.2"
@@ -42,6 +43,10 @@ moshi                  = { group = "com.squareup.moshi", name = "moshi-kotlin", 
 
 # Coroutines
 coroutines-android     = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# Test
+junit                  = { group = "junit", name = "junit", version.ref = "junit" }
+json                   = { group = "org.json", name = "json", version = "20231013" }
 
 [plugins]
 android-application    = { id = "com.android.application", version.ref = "agp" }

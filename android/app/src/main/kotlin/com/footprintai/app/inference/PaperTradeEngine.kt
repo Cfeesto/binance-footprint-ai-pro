@@ -9,15 +9,15 @@ import java.util.*
  * PaperTradeEngine
  * ────────────────
  * 规则：
- *  - 每次收到已关闭 K 线的信号时执行交易决策
- *  - 每笔交易使用余额的 50%（固定仓位）
+ *  - SHORT-only（LONG 禁用：9 个信号，55.6% WR，统计上无意义）
+ *  - 仓位大小：固定风险 2% 余额 / 止损幅度（Kelly 启发）
+ *    例：余额 $200，SL 3% → 风险 $4 → 仓位 $133 → qty = $133 / 入场价
  *  - 止损 3%，止盈 6%（相对入场价）
- *  - 同方向信号 → 持仓不变；反向信号 → 平仓 + 开新仓；NEUTRAL → 只检查止盈止损
- *  - livePrice() 在每根实时 tick 时调用，用于止盈止损检查
+ *  - 止盈止损在每根实时 tick 检查（onLivePrice）
+ *  - 并发安全：@Synchronized 保护 account 状态（IO 线程调用）
  */
 class PaperTradeEngine(private val store: PaperTradeStore) {
 
-    @Volatile
     private var account: PaperAccount = store.load()
 
     val state get() = account
@@ -26,24 +26,21 @@ class PaperTradeEngine(private val store: PaperTradeStore) {
 
     // ── 信号处理（每根已关闭 K 线触发）────────────────────────────────────────
 
+    @Synchronized
     fun onSignal(signal: Signal, closePrice: Double, timestamp: Long) {
-        // LONG disabled: 9 signals at 55.6% WR is noise
-        if (signal == Signal.LONG) return
+        if (signal == Signal.LONG) return   // LONG disabled
 
         var acc = account
         val pos = acc.openPosition
 
         when {
-            // 无持仓 + SHORT 信号 → 开空
             pos == null && signal == Signal.SHORT -> {
                 acc = acc.withOpen(signal, closePrice, timestamp)
             }
-            // 有持仓 + 反向信号 → 平仓并开新仓（保留逻辑，以防将来启用 LONG）
             pos != null && signal != Signal.NEUTRAL && signal != pos.direction -> {
                 acc = acc.withClose(closePrice, timestamp, CloseReason.SIGNAL_FLIP)
                     .withOpen(signal, closePrice, timestamp)
             }
-            // 其余（同向信号、NEUTRAL）→ 不操作，但仍记录日快照
         }
 
         acc = acc.withDailySnapshot()
@@ -51,12 +48,10 @@ class PaperTradeEngine(private val store: PaperTradeStore) {
         store.save(acc)
     }
 
-    /** 每根实时 tick 调用（止盈止损检查） */
+    @Synchronized
     fun onLivePrice(currentPrice: Double, timestamp: Long) {
         val pos = account.openPosition ?: return
         val reason = when {
-            pos.direction == Signal.LONG  && currentPrice <= pos.stopLoss   -> CloseReason.STOP_LOSS
-            pos.direction == Signal.LONG  && currentPrice >= pos.takeProfit -> CloseReason.TAKE_PROFIT
             pos.direction == Signal.SHORT && currentPrice >= pos.stopLoss   -> CloseReason.STOP_LOSS
             pos.direction == Signal.SHORT && currentPrice <= pos.takeProfit -> CloseReason.TAKE_PROFIT
             else -> return
@@ -66,61 +61,69 @@ class PaperTradeEngine(private val store: PaperTradeStore) {
         store.save(acc)
     }
 
+    @Synchronized
     fun reset() {
         store.reset()
         account = PaperAccount()
     }
 
-    // ── 账户变换（纯函数，不可变操作）────────────────────────────────────────
+    // ── 账户变换（纯函数）────────────────────────────────────────────────────
 
     private fun PaperAccount.withOpen(dir: Signal, price: Double, ts: Long): PaperAccount {
-        val positionValue = balance * 0.50       // 每笔用 50% 余额
-        val qty           = positionValue / price
+        // 固定风险仓位：每笔最多亏 2% 余额
+        // qty = (balance × 0.02) / (price × SL_PCT)
+        val SL_PCT       = 0.03
+        val riskDollars  = balance * 0.02
+        val positionValue = riskDollars / SL_PCT        // e.g. $4 / 3% = $133
+        val qty          = positionValue / price
+
         val sl = when (dir) {
-            Signal.LONG  -> price * 0.97    // 止损 -3%
-            Signal.SHORT -> price * 1.03
+            Signal.SHORT -> price * (1 + SL_PCT)        // SHORT: SL 在入场价上方
+            Signal.LONG  -> price * (1 - SL_PCT)
             else         -> price
         }
         val tp = when (dir) {
-            Signal.LONG  -> price * 1.06    // 止盈 +6%
-            Signal.SHORT -> price * 0.94
+            Signal.SHORT -> price * (1 - SL_PCT * 2)    // 止盈 = 2× 风险（6%）
+            Signal.LONG  -> price * (1 + SL_PCT * 2)
             else         -> price
         }
-        return copy(
-            openPosition = OpenPosition(dir, price, qty, ts, sl, tp)
-        )
+        return copy(openPosition = OpenPosition(dir, price, qty, ts, sl, tp))
     }
 
     private fun PaperAccount.withClose(price: Double, ts: Long, reason: CloseReason): PaperAccount {
         val pos = openPosition ?: return this
-        val pnl = when (pos.direction) {
+        // 扣除双边手续费（Binance taker 0.04% × 2）
+        val FEE = 0.0004
+        val grossPnl = when (pos.direction) {
             Signal.LONG  -> (price - pos.entryPrice) * pos.quantity
             Signal.SHORT -> (pos.entryPrice - price) * pos.quantity
             else         -> 0.0
         }
+        val feeAmount = pos.quantity * pos.entryPrice * FEE * 2
+        val netPnl    = grossPnl - feeAmount
+
         val record = TradeRecord(
             id          = System.currentTimeMillis(),
             direction   = pos.direction,
             entryPrice  = pos.entryPrice,
             exitPrice   = price,
             quantity    = pos.quantity,
-            pnl         = pnl,
+            pnl         = netPnl,
             openedAt    = pos.openedAt,
             closedAt    = ts,
             closeReason = reason,
         )
         return copy(
-            balance      = (balance + pnl).coerceAtLeast(0.0),
+            balance      = (balance + netPnl).coerceAtLeast(0.0),
             openPosition = null,
             trades       = trades + record,
             totalTrades  = totalTrades + 1,
-            winTrades    = winTrades + if (pnl > 0) 1 else 0,
+            winTrades    = winTrades + if (netPnl > 0) 1 else 0,
         )
     }
 
     private fun PaperAccount.withDailySnapshot(): PaperAccount {
         val today = dateFmt.format(Date())
-        // 当天已有快照则更新最后一条（当天收盘时余额变动）
         val updated = if (dailySnapshots.lastOrNull()?.date == today) {
             dailySnapshots.dropLast(1) + DailySnapshot(today, balance)
         } else {
