@@ -42,6 +42,14 @@ private val GRAY     = Color(0xFF4A4A4A)
 private val AXIS_TXT = Color(0xFF888888)
 private val GOLD     = Color(0xFFFFD700)
 
+/** K-abbreviation: -2127.6 → -2.1K */
+private fun formatDelta(v: Float): String {
+    val abs = kotlin.math.abs(v)
+    val sign = if (v >= 0) "+" else "-"
+    return if (abs >= 1000f) "$sign${"%.1f".format(abs / 1000f)}K"
+    else "$sign${"%.1f".format(abs)}"
+}
+
 private data class InspectedLevel(
     val priceFrom:    Double,
     val priceTo:      Double,
@@ -89,7 +97,7 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         }
 
         // ── 图表区域 ────────────────────────────────────────────────────────────
-        val candles = state.footprints.takeLast(20)
+        val candles = state.footprints.takeLast(13)
         if (candles.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = GREEN)
@@ -310,7 +318,7 @@ private fun FootprintChart(
 
                     // 成交量强度着色
                     val intensity = ((level.buyVol + level.sellVol) / maxLvlVol).coerceIn(0.15f, 1f)
-                    val bgAlpha   = 0.25f + 0.6f * intensity
+                    val bgAlpha   = 0.12f + 0.45f * intensity
                     val bgClr     = if (level.isBuyDominant) GREEN.copy(alpha = bgAlpha) else RED.copy(alpha = bgAlpha)
                     drawRect(bgClr, Offset(x + 1f, rowTop), Size(colW - 2f, rH))
 
@@ -336,22 +344,25 @@ private fun FootprintChart(
                     }
                 }
             } else {
-                // 历史K线：无层级数据 → 普通实体
+                // 历史K线：无层级数据 → 低透明度实体 + 轮廓，与实时足迹K线区分
                 val openY   = py(candle.open)
                 val closeY  = py(candle.close)
                 val bodyTop = minOf(openY, closeY)
                 val bodyH   = (maxOf(openY, closeY) - bodyTop).coerceAtLeast(2f)
-                drawRect(bodyClr.copy(alpha = 0.85f), Offset(x + 2f, bodyTop), Size(colW - 4f, bodyH))
+                drawRect(bodyClr.copy(alpha = 0.28f), Offset(x + 2f, bodyTop), Size(colW - 4f, bodyH))
+                drawRect(bodyClr.copy(alpha = 0.60f), Offset(x + 2f, bodyTop), Size(colW - 4f, bodyH),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1f))
             }
 
-            // Delta 标签（K线顶部）
+            // Delta 标签（K线顶部，K缩写）
             if (candle.delta != 0f) {
                 val dClr = if (candle.delta >= 0) GREEN else RED
                 val dm = textMeasurer.measure(
-                    "${if (candle.delta >= 0) "+" else ""}${"%.1f".format(candle.delta)}",
-                    TextStyle(fontSize = 7.sp, color = dClr, fontWeight = FontWeight.Bold),
+                    formatDelta(candle.delta),
+                    TextStyle(fontSize = 7.sp, color = dClr, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace),
                 )
-                drawText(dm, topLeft = Offset(x + (colW - dm.size.width) / 2, highY - dm.size.height - 2))
+                val dmX = (x + (colW - dm.size.width) / 2).coerceIn(0f, size.width - dm.size.width)
+                drawText(dm, topLeft = Offset(dmX, highY - dm.size.height - 2))
             }
 
             // SHORT 信号叠加（仅实时K线）
@@ -476,15 +487,18 @@ private fun CvdSubplot(cvd: List<Float>, modifier: Modifier) {
             drawLine(if (cvd[i + 1] >= cvd[i]) GREEN else RED, Offset(x1, y1), Offset(x2, y2), 1.5f)
         }
 
-        // 当前值标签 + "CVD" 标题
-        val lastV  = cvd.last()
+        // 当前值标签 + "CVD" 标题（K缩写避免截断）
+        val lastV   = cvd.last()
+        val absV    = kotlin.math.abs(lastV)
+        val cvdStr  = if (absV >= 1000f) "${if (lastV >= 0) "+" else "-"}${"%.1f".format(absV / 1000f)}K"
+                      else "${if (lastV >= 0) "+" else ""}${"%.0f".format(lastV)}"
         val valLbl = textMeasurer.measure(
-            "${if (lastV >= 0) "+" else ""}${"%.0f".format(lastV)}",
-            TextStyle(fontSize = 8.sp, color = if (lastV >= 0) GREEN else RED, fontFamily = FontFamily.Monospace),
+            cvdStr,
+            TextStyle(fontSize = 8.sp, color = if (lastV >= 0) GREEN else RED, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold),
         )
         val cvdLbl = textMeasurer.measure("CVD", TextStyle(fontSize = 7.sp, color = AXIS_TXT))
         drawText(cvdLbl, topLeft = Offset(4f, 2f))
-        drawText(valLbl, topLeft = Offset(w - valLbl.size.width - 4f, 2f))
+        drawText(valLbl, topLeft = Offset((w - valLbl.size.width - 4f).coerceAtLeast(0f), 2f))
     }
 }
 
@@ -640,11 +654,15 @@ private fun AdxSubplot(adxHistory: List<AdxPoint>, modifier: Modifier) {
         drawText(titleLbl, topLeft = Offset(4f, 2f))
 
         adxHistory.lastOrNull()?.let { last ->
-            val valLbl = textMeasurer.measure(
-                "ADX ${last.adx.toInt()}  +DI ${last.plusDi.toInt()}  -DI ${last.minusDi.toInt()}",
-                TextStyle(fontSize = 7.sp, color = AXIS_TXT, fontFamily = FontFamily.Monospace),
-            )
-            drawText(valLbl, topLeft = Offset(w - valLbl.size.width - 4f, 2f))
+            // 各指标独立着色：ADX金 / +DI绿 / -DI红
+            val adxLbl   = textMeasurer.measure("ADX ${last.adx.toInt()}", TextStyle(fontSize = 9.sp, color = GOLD,  fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold))
+            val plusLbl  = textMeasurer.measure("  +DI ${last.plusDi.toInt()}",  TextStyle(fontSize = 9.sp, color = GREEN, fontFamily = FontFamily.Monospace))
+            val minusLbl = textMeasurer.measure("  -DI ${last.minusDi.toInt()}", TextStyle(fontSize = 9.sp, color = RED,   fontFamily = FontFamily.Monospace))
+            val totalW   = adxLbl.size.width + plusLbl.size.width + minusLbl.size.width
+            var xPos     = (w - totalW - 4f).coerceAtLeast(0f)
+            drawText(adxLbl,   topLeft = Offset(xPos, 1f)); xPos += adxLbl.size.width
+            drawText(plusLbl,  topLeft = Offset(xPos, 1f)); xPos += plusLbl.size.width
+            drawText(minusLbl, topLeft = Offset(xPos, 1f))
         }
     }
 }
