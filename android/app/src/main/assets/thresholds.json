@@ -1,6 +1,6 @@
 {
-  "long_thresh": 0.6795616444734769,
-  "short_thresh": 0.32,
+  "long_thresh": 0.54,
+  "short_thresh": 0.46,
   "weights": {
     "catboost": 0.45,
     "xgboost": 0.35,
