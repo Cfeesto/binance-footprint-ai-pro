@@ -98,23 +98,51 @@ class OnnxInferenceEngine(private val ctx: Context) {
     private fun runSession(sess: OrtSession, tensor: OnnxTensor, isCatboost: Boolean): Float {
         val inputName = sess.inputNames.iterator().next()
         val out = sess.run(mapOf(inputName to tensor))
+        return try { extractProb(out) } finally { out.forEach { it.value.close() } }
+    }
 
-        return try {
-            if (isCatboost) {
-                // CatBoost: output[1] = probabilities float[1][2]
-                val probs = out[1].value as Array<FloatArray>
-                probs[0][1]
-            } else {
-                // XGBoost / RF skl2onnx: output[1] = probabilities float[1][2]
-                val probs = out[1].value as Array<FloatArray>
-                probs[0][1]
+    /**
+     * 多策略概率提取，兼容不同 ONNX 导出格式：
+     *  S1 — float[N][2]  (XGBoost skl2onnx, 部分 CatBoost)
+     *  S2 — List<Map>    (RF skl2onnx: Sequence<Map<int64,float>>)
+     *  S3 — Array<Map>   (部分 skl2onnx 变体)
+     *  S4 — FloatArray   (CatBoost 扁平化 [p0,p1,...])
+     *  S5 — output[0] 标量 Float
+     */
+    @Suppress("UNCHECKED_CAST")
+    private fun extractProb(out: OrtSession.Result): Float {
+        // S1: Array<FloatArray> — most common (XGBoost skl2onnx, CatBoost)
+        try {
+            val probs = out[1].value as? Array<FloatArray>
+            if (probs != null) return probs[0][1]
+        } catch (_: Exception) {}
+
+        // S2: List<Map<*,*>> — RF skl2onnx Sequence<Map<int64,float>>
+        try {
+            val raw = out[1].value
+            if (raw is List<*>) {
+                val m = raw.firstOrNull() as? Map<*, *>
+                if (m != null) return (m[1L] as? Float) ?: (m[1] as? Float) ?: 0.5f
             }
-        } catch (e: Exception) {
-            // Fallback: output[0] scalar
-            (out[0].value as? Float) ?: 0.5f
-        } finally {
-            out.forEach { it.value.close() }
-        }
+        } catch (_: Exception) {}
+
+        // S3: Array<Map<*,*>>
+        try {
+            val arr = out[1].value as? Array<*>
+            if (arr != null && arr.isNotEmpty()) {
+                val m = arr[0] as? Map<*, *>
+                if (m != null) return (m[1L] as? Float) ?: (m[1] as? Float) ?: 0.5f
+            }
+        } catch (_: Exception) {}
+
+        // S4: flat FloatArray [p_class0, p_class1]
+        try {
+            val flat = out[1].value as? FloatArray
+            if (flat != null && flat.size >= 2) return flat[1]
+        } catch (_: Exception) {}
+
+        // S5: output[0] scalar (some CatBoost exports)
+        return (out[0].value as? Float) ?: 0.5f
     }
 
     /** 运行时覆盖阈值（Settings 屏调用） */
