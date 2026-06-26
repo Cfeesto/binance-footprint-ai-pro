@@ -56,7 +56,7 @@ class BinanceRepository(
     val aggTrades: Flow<AggTradeMsg> = wsFlow("${symbol}@aggTrade")
         .map { tradeAdapter.fromJson(it) }.filter { it != null }.map { it!! }
 
-    suspend fun fetchHistory(limit: Int = 200): List<Kline> = withContext(Dispatchers.IO) {
+    suspend fun fetchHistory(limit: Int = 500): List<Kline> = withContext(Dispatchers.IO) {
         val url = "https://api.binance.com/api/v3/klines?symbol=${symbol.uppercase()}&interval=$interval&limit=$limit"
         val body = okhttp.newCall(Request.Builder().url(url).build()).execute().body!!.string()
         val arr = JSONArray(body)

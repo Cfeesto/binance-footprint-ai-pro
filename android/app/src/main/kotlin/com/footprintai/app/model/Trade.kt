@@ -13,7 +13,7 @@ data class TradeRecord(
     val closeReason:  CloseReason,
 )
 
-enum class CloseReason { SIGNAL_FLIP, STOP_LOSS, TAKE_PROFIT }
+enum class CloseReason { SIGNAL_FLIP, STOP_LOSS, TAKE_PROFIT, MAX_HOLD }
 
 /** 当前持仓（只允许一个）*/
 data class OpenPosition(

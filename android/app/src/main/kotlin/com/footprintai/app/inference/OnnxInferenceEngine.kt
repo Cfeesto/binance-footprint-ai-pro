@@ -32,9 +32,7 @@ class OnnxInferenceEngine(private val ctx: Context) {
     private lateinit var rfSess:    OrtSession
 
     var longThresh:  Float = 0.680f
-        private set
     var shortThresh: Float = 0.211f
-        private set
 
     // 默认权重（Lorentzian 权重已重新分配，见 export_onnx.py 注释）
     private var wCat: Float = 0.45f
@@ -117,6 +115,12 @@ class OnnxInferenceEngine(private val ctx: Context) {
         } finally {
             out.forEach { it.value.close() }
         }
+    }
+
+    /** 运行时覆盖阈值（Settings 屏调用） */
+    fun setThresholds(shortT: Float, longT: Float) {
+        longThresh  = longT
+        shortThresh = shortT
     }
 
     private fun loadAsset(name: String): ByteArray =

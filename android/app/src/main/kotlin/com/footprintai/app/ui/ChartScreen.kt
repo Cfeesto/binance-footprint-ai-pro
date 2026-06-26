@@ -35,12 +35,13 @@ import com.footprintai.app.model.Signal
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
-private val BG       = Color(0xFF0D1117)
-private val GREEN    = Color(0xFF00C853)
-private val RED      = Color(0xFFD50000)
-private val GRAY     = Color(0xFF4A4A4A)
-private val AXIS_TXT = Color(0xFF888888)
-private val GOLD     = Color(0xFFFFD700)
+private val BG         = Color(0xFF131722)   // TradingView dark bg
+private val GREEN      = Color(0xFF26A69A)   // TradingView teal
+private val RED        = Color(0xFFEF5350)   // TradingView salmon
+private val GRAY       = Color(0xFF363A45)
+private val AXIS_TXT   = Color(0xFFB2B5BE)   // TradingView axis text
+private val GOLD       = Color(0xFFFFD700)
+private val SUBPLOT_BG = Color(0xFF0E1117)   // 子图背景（比主图略暗）
 
 /** K-abbreviation: -2127.6 → -2.1K */
 private fun formatDelta(v: Float): String {
@@ -238,11 +239,10 @@ private fun FootprintChart(
 
         fun py(price: Double): Float = ((priceMax - price) / priceRange * chartH).toFloat()
 
-        // 价格网格线 + 右侧轴标签
+        // 价格轴标签（无网格线，保持图表整洁）
         for (i in 0..5) {
             val p = priceMin + (priceMax - priceMin) * i / 5
             val y = py(p)
-            drawLine(GRAY.copy(alpha = 0.3f), Offset(0f, y), Offset(chartW, y), 0.5f)
             val lbl = textMeasurer.measure(
                 "\$${"%,.0f".format(p)}",
                 TextStyle(fontSize = 9.sp, color = AXIS_TXT, fontFamily = FontFamily.Monospace),
@@ -288,10 +288,6 @@ private fun FootprintChart(
 
             val highY = py(candle.high)
             val lowY  = py(candle.low)
-
-            if (isLive && signal == Signal.SHORT) {
-                drawRect(RED.copy(alpha = 0.08f), Offset(x, 0f), Size(colW, chartH))
-            }
 
             // 高 ATR 波动扩张辉光（K线 range > 1.5× atrPct）
             indicators?.let { ind ->
@@ -365,12 +361,6 @@ private fun FootprintChart(
                 drawText(dm, topLeft = Offset(dmX, highY - dm.size.height - 2))
             }
 
-            // SHORT 信号叠加（仅实时K线）
-            if (isLive && signal == Signal.SHORT) {
-                val sm = textMeasurer.measure("▼ SHORT", TextStyle(fontSize = 11.sp, color = RED, fontWeight = FontWeight.Bold))
-                drawText(sm, topLeft = Offset(x + (colW - sm.size.width) / 2, chartH / 2 - sm.size.height / 2))
-            }
-
             // 时间轴标签：每 5 根一次 + 最后一根
             if (i % 5 == 0 || i == candles.lastIndex) {
                 val ts = candle.openTime
@@ -425,7 +415,7 @@ private fun computeStackedImbalances(levels: List<FootprintLevel>): Set<Double> 
 @Composable
 private fun VolumeProfileBar(candles: List<FootprintCandle>, modifier: Modifier) {
     val textMeasurer = rememberTextMeasurer()
-    Canvas(modifier = modifier.background(Color(0xFF0A0C10))) {
+    Canvas(modifier = modifier.background(SUBPLOT_BG)) {
         val agg = HashMap<Double, Pair<Float, Float>>()  // price → (buyVol, sellVol)
         candles.forEach { c ->
             c.levels.forEach { lvl ->
@@ -461,7 +451,7 @@ private fun VolumeProfileBar(candles: List<FootprintCandle>, modifier: Modifier)
 @Composable
 private fun CvdSubplot(cvd: List<Float>, modifier: Modifier) {
     val textMeasurer = rememberTextMeasurer()
-    Canvas(modifier = modifier.background(Color(0xFF0A0C10))) {
+    Canvas(modifier = modifier.background(SUBPLOT_BG)) {
         if (cvd.isEmpty()) return@Canvas
         val w = size.width; val h = size.height
         val n = cvd.size
@@ -618,7 +608,7 @@ private fun SignalGauge(result: InferenceResult?, indicators: IndicatorState?) {
 @Composable
 private fun AdxSubplot(adxHistory: List<AdxPoint>, modifier: Modifier) {
     val textMeasurer = rememberTextMeasurer()
-    Canvas(modifier = modifier.background(Color(0xFF0A0C10))) {
+    Canvas(modifier = modifier.background(SUBPLOT_BG)) {
         if (adxHistory.isEmpty()) return@Canvas
         val w = size.width; val h = size.height
         val n = adxHistory.size

@@ -6,6 +6,7 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.footprintai.app.data.AppSettings
 import com.footprintai.app.data.BinanceRepository
 import com.footprintai.app.data.PaperTradeStore
 import com.footprintai.app.inference.FeatureBuilder
@@ -35,8 +36,17 @@ data class IndicatorState(
     val plusDi:      Float,
     val minusDi:     Float,
     val atrPct:      Float,
-    val shortThresh: Float = 0.211f,
-    val longThresh:  Float = 0.680f,
+    val shortThresh: Float = 0.46f,
+    val longThresh:  Float = 0.54f,
+)
+
+data class AppSettingsState(
+    val shortThresh:    Float   = 0.46f,
+    val longThresh:     Float   = 0.54f,
+    val riskPct:        Float   = 0.02f,
+    val slAtrMult:      Float   = 1.5f,
+    val enableLong:     Boolean = true,
+    val maxDrawdownPct: Float   = 0.30f,
 )
 
 data class ChartState(
@@ -46,9 +56,11 @@ data class ChartState(
     val error:        String?               = null,
     val engineReady:  Boolean               = false,
     val paperAccount: PaperAccount          = PaperAccount(),
-    val cvd:          List<Float>           = emptyList(),  // 累积delta，每根K线一个值（含实时）
-    val adxHistory:   List<AdxPoint>        = emptyList(),  // 每根收盘K线一个点
-    val indicators:   IndicatorState?       = null,         // 最新指标快照
+    val cvd:          List<Float>           = emptyList(),
+    val adxHistory:   List<AdxPoint>        = emptyList(),
+    val indicators:   IndicatorState?       = null,
+    val signalLog:    List<InferenceResult> = emptyList(),  // 最近 100 条 LONG/SHORT 信号
+    val appSettings:  AppSettingsState      = AppSettingsState(),
 )
 
 class ChartViewModel(app: Application) : AndroidViewModel(app) {
@@ -56,6 +68,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(ChartState())
     val state: StateFlow<ChartState> = _state.asStateFlow()
 
+    private val settings    = AppSettings(app)
     private val repo        = BinanceRepository()
     private val engine      = OnnxInferenceEngine(app)
     private val paperEngine = PaperTradeEngine(PaperTradeStore(app))
@@ -76,6 +89,9 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     init {
+        // 从 AppSettings 恢复运行时参数
+        applySettingsToEngines()
+        _state.update { it.copy(appSettings = currentSettingsState()) }
         // 先加载历史再开 WS，避免图表空列竞态
         viewModelScope.launch(Dispatchers.IO) {
             initEngine()
@@ -84,6 +100,34 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             collectClosedKlines()
             collectAggTrades()
         }
+    }
+
+    private fun applySettingsToEngines() {
+        engine.setThresholds(settings.shortThresh, settings.longThresh)
+        paperEngine.enableLong     = settings.enableLong
+        paperEngine.riskPct        = settings.riskPct.toDouble()
+        paperEngine.slAtrMult      = settings.slAtrMult
+        paperEngine.maxDrawdownPct = settings.maxDrawdownPct.toDouble()
+    }
+
+    private fun currentSettingsState() = AppSettingsState(
+        shortThresh    = settings.shortThresh,
+        longThresh     = settings.longThresh,
+        riskPct        = settings.riskPct,
+        slAtrMult      = settings.slAtrMult,
+        enableLong     = settings.enableLong,
+        maxDrawdownPct = settings.maxDrawdownPct,
+    )
+
+    fun updateSettings(s: AppSettingsState) {
+        settings.shortThresh    = s.shortThresh
+        settings.longThresh     = s.longThresh
+        settings.riskPct        = s.riskPct
+        settings.slAtrMult      = s.slAtrMult
+        settings.enableLong     = s.enableLong
+        settings.maxDrawdownPct = s.maxDrawdownPct
+        applySettingsToEngines()
+        _state.update { it.copy(appSettings = s) }
     }
 
     private suspend fun loadHistory() {
@@ -139,48 +183,50 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                 if (!_state.value.engineReady) return@collect
                 val features = FeatureBuilder.build(window.toList()) ?: return@collect
                 val out = engine.infer(features)
-                paperEngine.onSignal(out.signal, kline.close, kline.openTime)
-                if (out.signal == Signal.SHORT) notifySignal(out.signal, kline.close)
+
+                // 特征索引：[17]=adx14Norm, [18]=plusDi, [19]=minusDi, [23]=atr14Pct
+                val atrPct  = features[23]
+                paperEngine.onSignal(out.signal, kline.close, kline.openTime, atrPct)
+                if (out.signal != Signal.NEUTRAL) notifySignal(out.signal, kline.close)
                 try { repo.sendTradingSignal(out.signal.name, kline.close, kline.openTime) } catch (_: Exception) {}
 
-                // 从特征向量中提取指标值（索引与 FeatureBuilder.kt 一致）
-                // [17]=adx14Norm(×100→0-100), [18]=plusDi, [19]=minusDi, [23]=atr14Pct, [24]=bbPos
-                val adxVal    = features[17] * 100f
-                val plusDi    = features[18]
-                val minusDi   = features[19]
-                val atrPct    = features[23]
-                val adxPoint  = AdxPoint(adxVal, plusDi, minusDi)
+                val adxVal   = features[17] * 100f
+                val plusDi   = features[18]
+                val minusDi  = features[19]
+                val adxPoint = AdxPoint(adxVal, plusDi, minusDi)
                 mu.withLock {
                     adxDeque.addLast(adxPoint)
                     if (adxDeque.size > 21) adxDeque.removeFirst()
                 }
 
-                // 计算 Bollinger Bands（20根收盘价，stddev）
-                val closes    = window.takeLast(20).map { it.close }
-                val bbMid     = closes.average()
-                val variance  = closes.sumOf { (it - bbMid) * (it - bbMid) } / closes.size
-                val bbStd     = sqrt(variance)
-                val bbUpper   = bbMid + 2.0 * bbStd
-                val bbLower   = bbMid - 2.0 * bbStd
+                // Bollinger Bands（20根收盘价）
+                val closes   = window.takeLast(20).map { it.close }
+                val bbMid    = closes.average()
+                val variance = closes.sumOf { (it - bbMid) * (it - bbMid) } / closes.size
+                val bbUpper  = bbMid + 2.0 * sqrt(variance)
+                val bbLower  = bbMid - 2.0 * sqrt(variance)
 
                 val indicators = IndicatorState(
-                    bbUpper     = bbUpper,
-                    bbLower     = bbLower,
-                    bbMid       = bbMid,
-                    adx         = adxVal,
-                    plusDi      = plusDi,
-                    minusDi     = minusDi,
+                    bbUpper     = bbUpper, bbLower = bbLower, bbMid = bbMid,
+                    adx         = adxVal,  plusDi  = plusDi,  minusDi = minusDi,
                     atrPct      = atrPct,
                     shortThresh = engine.shortThresh,
                     longThresh  = engine.longThresh,
                 )
 
-                _state.update { it.copy(
-                    lastResult   = InferenceResult(out.signal, out.ensemble, out.probCat, out.probXgb, out.probRf, kline),
-                    paperAccount = paperEngine.state,
-                    adxHistory   = adxDeque.toList(),
-                    indicators   = indicators,
-                ) }
+                val result = InferenceResult(out.signal, out.ensemble, out.probCat, out.probXgb, out.probRf, kline)
+                _state.update { st ->
+                    val newLog = if (out.signal != Signal.NEUTRAL)
+                        (st.signalLog + result).takeLast(100)
+                    else st.signalLog
+                    st.copy(
+                        lastResult   = result,
+                        paperAccount = paperEngine.state,
+                        adxHistory   = adxDeque.toList(),
+                        indicators   = indicators,
+                        signalLog    = newLog,
+                    )
+                }
             }
     }
 

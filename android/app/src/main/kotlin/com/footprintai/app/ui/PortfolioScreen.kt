@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.footprintai.app.model.*
+import kotlin.math.abs
+import kotlin.math.sqrt
 import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
 import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
@@ -34,6 +36,43 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
     val pnlPct   = (pnl / account.startBalance) * 100
     val winRate  = if (account.totalTrades > 0) account.winTrades.toFloat() / account.totalTrades * 100 else 0f
     val daysLeft = 30 - ((System.currentTimeMillis() - account.startedAt) / 86_400_000L).coerceAtLeast(0)
+
+    // ── 高级统计（从交易记录计算）──────────────────────────────────────────────
+    val wins      = account.trades.filter { it.pnl > 0 }
+    val losses    = account.trades.filter { it.pnl <= 0 }
+    val avgWin    = if (wins.isNotEmpty()) wins.sumOf { it.pnl } / wins.size else 0.0
+    val avgLoss   = if (losses.isNotEmpty()) abs(losses.sumOf { it.pnl }) / losses.size else 0.0
+    val grossWin  = wins.sumOf { it.pnl }
+    val grossLoss = abs(losses.sumOf { it.pnl })
+    val profitFactor = if (grossLoss > 0) grossWin / grossLoss else 0.0
+    val expectedValue = (winRate / 100f) * avgWin - (1f - winRate / 100f) * avgLoss
+    val bestTrade  = account.trades.maxByOrNull { it.pnl }
+    val worstTrade = account.trades.minByOrNull { it.pnl }
+    // 最大回撤（从每日快照）
+    val maxDrawdown = run {
+        var peak = account.startBalance; var maxDD = 0.0
+        account.dailySnapshots.forEach { s ->
+            if (s.balance > peak) peak = s.balance
+            val dd = if (peak > 0) (peak - s.balance) / peak else 0.0
+            if (dd > maxDD) maxDD = dd
+        }
+        maxDD
+    }
+    // 简化 Sharpe（日收益率，年化）
+    val dailyReturns = account.dailySnapshots.zipWithNext { a, b ->
+        if (a.balance > 0) (b.balance - a.balance) / a.balance else 0.0
+    }
+    val sharpe = if (dailyReturns.size >= 2) {
+        val mean = dailyReturns.average()
+        val std  = sqrt(dailyReturns.sumOf { (it - mean) * (it - mean) } / dailyReturns.size)
+        if (std > 0) mean / std * sqrt(365.0) else 0.0
+    } else 0.0
+    // 连胜/连败
+    var maxWStreak = 0; var maxLStreak = 0; var curW = 0; var curL = 0
+    account.trades.forEach { t ->
+        if (t.pnl > 0) { curW++; if (curW > maxWStreak) maxWStreak = curW; curL = 0 }
+        else            { curL++; if (curL > maxLStreak) maxLStreak = curL; curW = 0 }
+    }
 
     // 权益曲线 producer
     val producer = remember { CartesianChartModelProducer() }
@@ -128,6 +167,33 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
             }
         }
 
+        // ── 高级分析卡片 ──────────────────────────────────────────────────────
+        if (account.totalTrades >= 5) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text("Performance Analytics", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        HorizontalDivider(thickness = 0.5.dp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AnalyticStat("Profit Factor", if (profitFactor > 0) "%.2f×".format(profitFactor) else "—")
+                            AnalyticStat("Sharpe (1Y)",   if (sharpe != 0.0) "%.2f".format(sharpe) else "—")
+                            AnalyticStat("Max DD",        "%.1f%%".format(maxDrawdown * 100))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AnalyticStat("Avg Win",  if (avgWin > 0)  "+$%.2f".format(avgWin) else "—")
+                            AnalyticStat("Avg Loss", if (avgLoss > 0) "-$%.2f".format(avgLoss) else "—")
+                            AnalyticStat("Exp Val",  "${if (expectedValue >= 0) "+" else ""}$%.2f".format(expectedValue))
+                        }
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AnalyticStat("Best",  if (bestTrade != null)  "+$%.2f".format(bestTrade.pnl)  else "—")
+                            AnalyticStat("Worst", if (worstTrade != null) "$%.2f".format(worstTrade.pnl) else "—")
+                            AnalyticStat("Win/Loss Streak", "$maxWStreak W / $maxLStreak L")
+                        }
+                    }
+                }
+            }
+        }
+
         // ── 统计行 ────────────────────────────────────────────────────────────
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -183,6 +249,14 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
                 Text("Reset Paper Account  ($200 start)")
             }
         }
+    }
+}
+
+@Composable
+private fun AnalyticStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
