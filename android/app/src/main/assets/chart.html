@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { width: 100%; height: 100%; background: #131722; overflow: hidden; }
+#chart { width: 100%; height: 100%; }
+#status {
+  position: absolute; top: 6px; left: 50%; transform: translateX(-50%);
+  color: #9e9e9e; font: 11px monospace; pointer-events: none;
+}
+</style>
+</head>
+<body>
+<div id="chart"></div>
+<div id="status">Loading…</div>
+<script src="lw-charts.js"></script>
+<script>
+var chart = LightweightCharts.createChart(document.getElementById('chart'), {
+  width:  window.innerWidth,
+  height: window.innerHeight,
+  layout: {
+    background: { type: 'solid', color: '#131722' },
+    textColor:  '#b2b5be',
+  },
+  grid: {
+    vertLines: { color: '#2a2a2a' },
+    horzLines: { color: '#2a2a2a' },
+  },
+  crosshair:       { mode: 1 },  // Normal
+  rightPriceScale: { borderColor: '#2a2a2a' },
+  timeScale: {
+    borderColor:     '#2a2a2a',
+    timeVisible:     true,
+    secondsVisible:  false,
+  },
+  handleScale:  { axisPressedMouseMove: true },
+  handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+});
+
+var candleSeries = chart.addCandlestickSeries({
+  upColor:        '#26a69a',
+  downColor:      '#ef5350',
+  borderUpColor:  '#26a69a',
+  borderDownColor:'#ef5350',
+  wickUpColor:    '#26a69a',
+  wickDownColor:  '#ef5350',
+});
+
+// SL / TP lines (dashed)
+var slSeries = chart.addLineSeries({
+  color: '#ef5350', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
+  lastValueVisible: true, title: 'SL',
+});
+var tpSeries = chart.addLineSeries({
+  color: '#26a69a', lineWidth: 1, lineStyle: 2, priceLineVisible: false,
+  lastValueVisible: true, title: 'TP',
+});
+
+window.addEventListener('resize', function() {
+  chart.resize(window.innerWidth, window.innerHeight);
+});
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+// ── Android → JS bridge functions ────────────────────────────────────────────
+
+// Called once with historical bars array: [{time, open, high, low, close}, ...]
+// time is epoch seconds
+function updateBars(jsonStr) {
+  try {
+    var bars = JSON.parse(jsonStr);
+    candleSeries.setData(bars);
+    if (bars.length > 0) {
+      chart.timeScale().fitContent();
+      var last = bars[bars.length - 1];
+      setStatus(last.close.toFixed(2));
+    }
+  } catch(e) { setStatus('err: ' + e.message); }
+}
+
+// Called on every live kline update (single bar)
+function updateLastBar(jsonStr) {
+  try {
+    var bar = JSON.parse(jsonStr);
+    candleSeries.update(bar);
+    setStatus(bar.close.toFixed(2));
+  } catch(e) {}
+}
+
+// Called when position opens/closes: {stopLoss, takeProfit} or null to clear
+function updatePosition(jsonStr) {
+  try {
+    if (!jsonStr || jsonStr === 'null') {
+      slSeries.setData([]);
+      tpSeries.setData([]);
+      return;
+    }
+    var p = JSON.parse(jsonStr);
+    // Use the last bar time for the line anchor
+    var data  = candleSeries.data();
+    var lastT = data && data.length > 0 ? data[data.length - 1].time
+                                        : Math.floor(Date.now() / 1000);
+    slSeries.setData([{ time: lastT - 3600, value: p.stopLoss  },
+                      { time: lastT,         value: p.stopLoss  }]);
+    tpSeries.setData([{ time: lastT - 3600, value: p.takeProfit },
+                      { time: lastT,         value: p.takeProfit }]);
+  } catch(e) {}
+}
+
+// Called with symbol label to update status
+function setSymbol(sym) {
+  setStatus(sym + ' · 5m');
+}
+</script>
+</body>
+</html>

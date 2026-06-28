@@ -1,9 +1,22 @@
 {
-  "long_thresh": 0.6795616444734769,
-  "short_thresh": 0.21144050305148426,
+  "long_thresh": 0.64,
+  "short_thresh": 0.25,
   "weights": {
-    "catboost": 0.45,
-    "xgboost": 0.35,
-    "rf": 0.2
-  }
+    "lorentzian": 0.35,
+    "catboost": 0.3,
+    "xgboost": 0.25,
+    "rf": 0.1
+  },
+  "lorentzian_feature_indices": [
+    15,
+    20,
+    16,
+    17,
+    2,
+    0,
+    28,
+    29,
+    33,
+    34
+  ]
 }

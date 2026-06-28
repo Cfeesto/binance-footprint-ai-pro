@@ -10,80 +10,22 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.footprintai.app.model.*
-import kotlin.math.abs
-import kotlin.math.sqrt
-import com.patrykandpatrick.vico.compose.cartesian.CartesianChartHost
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberBottomAxis
-import com.patrykandpatrick.vico.compose.cartesian.axis.rememberStartAxis
-import com.patrykandpatrick.vico.compose.cartesian.layer.rememberLineCartesianLayer
-import com.patrykandpatrick.vico.compose.cartesian.rememberCartesianChart
-import com.patrykandpatrick.vico.core.cartesian.data.CartesianChartModelProducer
-import com.patrykandpatrick.vico.core.cartesian.data.lineSeries
+import com.footprintai.app.data.MtDeal
+import com.footprintai.app.data.MtPosition
 import java.text.SimpleDateFormat
 import java.util.*
 
 @Composable
 fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
     val state   by vm.state.collectAsStateWithLifecycle()
-    val account  = state.paperAccount
-    val pnl      = account.balance - account.startBalance
-    val pnlPct   = (pnl / account.startBalance) * 100
-    val winRate  = if (account.totalTrades > 0) account.winTrades.toFloat() / account.totalTrades * 100 else 0f
-    val daysLeft = 30 - ((System.currentTimeMillis() - account.startedAt) / 86_400_000L).coerceAtLeast(0)
-
-    // ── 高级统计（从交易记录计算）──────────────────────────────────────────────
-    val wins      = account.trades.filter { it.pnl > 0 }
-    val losses    = account.trades.filter { it.pnl <= 0 }
-    val avgWin    = if (wins.isNotEmpty()) wins.sumOf { it.pnl } / wins.size else 0.0
-    val avgLoss   = if (losses.isNotEmpty()) abs(losses.sumOf { it.pnl }) / losses.size else 0.0
-    val grossWin  = wins.sumOf { it.pnl }
-    val grossLoss = abs(losses.sumOf { it.pnl })
-    val profitFactor = if (grossLoss > 0) grossWin / grossLoss else 0.0
-    val expectedValue = (winRate / 100f) * avgWin - (1f - winRate / 100f) * avgLoss
-    val bestTrade  = account.trades.maxByOrNull { it.pnl }
-    val worstTrade = account.trades.minByOrNull { it.pnl }
-    // 最大回撤（从每日快照）
-    val maxDrawdown = run {
-        var peak = account.startBalance; var maxDD = 0.0
-        account.dailySnapshots.forEach { s ->
-            if (s.balance > peak) peak = s.balance
-            val dd = if (peak > 0) (peak - s.balance) / peak else 0.0
-            if (dd > maxDD) maxDD = dd
-        }
-        maxDD
-    }
-    // 简化 Sharpe（日收益率，年化）
-    val dailyReturns = account.dailySnapshots.zipWithNext { a, b ->
-        if (a.balance > 0) (b.balance - a.balance) / a.balance else 0.0
-    }
-    val sharpe = if (dailyReturns.size >= 2) {
-        val mean = dailyReturns.average()
-        val std  = sqrt(dailyReturns.sumOf { (it - mean) * (it - mean) } / dailyReturns.size)
-        if (std > 0) mean / std * sqrt(365.0) else 0.0
-    } else 0.0
-    // 连胜/连败
-    var maxWStreak = 0; var maxLStreak = 0; var curW = 0; var curL = 0
-    account.trades.forEach { t ->
-        if (t.pnl > 0) { curW++; if (curW > maxWStreak) maxWStreak = curW; curL = 0 }
-        else            { curL++; if (curL > maxLStreak) maxLStreak = curL; curW = 0 }
-    }
-
-    // 权益曲线 producer
-    val producer = remember { CartesianChartModelProducer() }
-    LaunchedEffect(account.dailySnapshots) {
-        val snaps = account.dailySnapshots
-        if (snaps.size >= 2) {
-            producer.runTransaction {
-                lineSeries { series(snaps.map { it.balance.toFloat() }) }
-            }
-        }
-    }
+    val acct     = state.mtAccount
+    val settings = state.appSettings
 
     LazyColumn(
         modifier = Modifier
@@ -92,7 +34,97 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        // ── Walk-Forward 回测参考卡 ───────────────────────────────────────────
+        // ── Connection status ─────────────────────────────────────────────────
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors   = CardDefaults.cardColors(
+                    containerColor = if (state.mtConnected)
+                        MaterialTheme.colorScheme.secondaryContainer
+                    else MaterialTheme.colorScheme.errorContainer
+                ),
+            ) {
+                Row(
+                    Modifier.padding(14.dp).fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment     = Alignment.CenterVertically,
+                ) {
+                    Column {
+                        Text(
+                            if (state.mtConnected) "MT5 Connected" else "MT5 Not Connected",
+                            fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                        )
+                        if (!state.mtConnected) {
+                            Text("Add MetaApi token & account ID in Settings",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                        } else {
+                            Text(
+                                "${settings.tradingSymbol}  ·  ${settings.metaApiRegion}",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                    if (state.mtConnected) {
+                        TextButton(onClick = { vm.refreshMt() }) {
+                            Text("Refresh", fontSize = 12.sp)
+                        }
+                    }
+                }
+                state.mtError?.let { err ->
+                    Text(
+                        err, fontSize = 10.sp, color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(horizontal = 14.dp).padding(bottom = 10.dp),
+                    )
+                }
+            }
+        }
+
+        // ── Account info ──────────────────────────────────────────────────────
+        if (acct != null) {
+            item {
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text("Live Account", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                            Text(acct.currency, color = MaterialTheme.colorScheme.primary, fontSize = 13.sp)
+                        }
+                        Row(
+                            Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.Bottom,
+                        ) {
+                            Text(
+                                "${"%.2f".format(acct.balance)} ${acct.currency}",
+                                fontWeight = FontWeight.Bold, fontSize = 26.sp,
+                            )
+                            val pnl = acct.equity - acct.balance
+                            Text(
+                                "${if (pnl >= 0) "+" else ""}${"%.2f".format(pnl)} unrealized",
+                                color = if (pnl >= 0) Color(0xFF00C853) else Color(0xFFD50000),
+                                fontSize = 13.sp, fontWeight = FontWeight.SemiBold,
+                            )
+                        }
+                        HorizontalDivider(thickness = 0.5.dp)
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            AccountStat("Equity",      "${"%.2f".format(acct.equity)} ${acct.currency}")
+                            AccountStat("Free Margin", "${"%.2f".format(acct.freeMargin)} ${acct.currency}")
+                            AccountStat("Leverage",    "1:${acct.leverage}")
+                        }
+                        if (acct.broker.isNotEmpty()) {
+                            Text("${acct.broker}  ·  ${acct.server}", fontSize = 10.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Open positions ────────────────────────────────────────────────────
+        if (state.mtPositions.isNotEmpty()) {
+            item { Text("Open Positions", fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+            items(state.mtPositions) { pos -> MtPositionCard(pos) }
+        }
+
+        // ── Walk-Forward backtest reference ───────────────────────────────────
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -105,156 +137,33 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
                         BacktestStat("Profit F.", "3.06×")
                         BacktestStat("Signals",   "4,952")
                     }
-                    // Live vs. expected WR 对比
-                    if (account.totalTrades >= 10) {
-                        val wrDiff = winRate - 75.4f
-                        val diffColor = if (wrDiff >= 0) Color(0xFF00C853) else Color(0xFFD50000)
-                        Text(
-                            "Live WR ${"%.0f".format(winRate)}%  ${if (wrDiff >= 0) "+" else ""}${"%.1f".format(wrDiff)}% vs. backtest",
-                            color    = diffColor,
-                            fontSize = 11.sp,
-                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        )
-                    }
-                    // Lorentzian 披露
                     HorizontalDivider(thickness = 0.5.dp)
                     Text(
                         "✓ Full 4-model ensemble: Lorentzian 35% · CatBoost 30% · XGBoost 25% · RF 10%",
-                        fontSize = 10.sp,
-                        color    = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
+                        fontSize = 10.sp, color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
                         lineHeight = 14.sp,
                     )
                 }
             }
         }
 
-        // ── 余额卡片 ──────────────────────────────────────────────────────────
-        item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Text("Paper Account", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                        Text(
-                            "${daysLeft}d left",
-                            color = MaterialTheme.colorScheme.primary,
-                            fontSize = 13.sp,
-                        )
-                    }
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.Bottom) {
-                        Text(
-                            "$${String.format("%.2f", account.balance)}",
-                            fontWeight = FontWeight.Bold,
-                            fontSize   = 28.sp,
-                        )
-                        Text(
-                            "${if (pnl >= 0) "+" else ""}$${String.format("%.2f", pnl)}  (${String.format("%.1f", pnlPct)}%)",
-                            color      = if (pnl >= 0) Color(0xFF00C853) else Color(0xFFD50000),
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize   = 14.sp,
-                        )
-                    }
-                    // 进度条（30天）
-                    val progress = ((30 - daysLeft) / 30f).coerceIn(0f, 1f)
-                    LinearProgressIndicator(
-                        progress    = { progress },
-                        modifier    = Modifier.fillMaxWidth().height(4.dp),
-                        color       = MaterialTheme.colorScheme.primary,
-                        trackColor  = MaterialTheme.colorScheme.surfaceVariant,
-                    )
-                    Text("${"%.0f".format(progress * 100)}% of 30-day challenge", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-        }
-
-        // ── 高级分析卡片 ──────────────────────────────────────────────────────
-        if (account.totalTrades >= 5) {
+        // ── Recent deals ──────────────────────────────────────────────────────
+        if (state.mtDeals.isNotEmpty()) {
+            item { Text("Recent Deals (7d)", fontWeight = FontWeight.SemiBold, fontSize = 14.sp) }
+            items(state.mtDeals.takeLast(30).reversed()) { deal -> DealRow(deal) }
+        } else if (state.mtConnected && acct != null) {
             item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("Performance Analytics", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
-                        HorizontalDivider(thickness = 0.5.dp)
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            AnalyticStat("Profit Factor", if (profitFactor > 0) "%.2f×".format(profitFactor) else "—")
-                            AnalyticStat("Sharpe (1Y)",   if (sharpe != 0.0) "%.2f".format(sharpe) else "—")
-                            AnalyticStat("Max DD",        "%.1f%%".format(maxDrawdown * 100))
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            AnalyticStat("Avg Win",  if (avgWin > 0)  "+$%.2f".format(avgWin) else "—")
-                            AnalyticStat("Avg Loss", if (avgLoss > 0) "-$%.2f".format(avgLoss) else "—")
-                            AnalyticStat("Exp Val",  "${if (expectedValue >= 0) "+" else ""}$%.2f".format(expectedValue))
-                        }
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            AnalyticStat("Best",  if (bestTrade != null)  "+$%.2f".format(bestTrade.pnl)  else "—")
-                            AnalyticStat("Worst", if (worstTrade != null) "$%.2f".format(worstTrade.pnl) else "—")
-                            AnalyticStat("Win/Loss Streak", "$maxWStreak W / $maxLStreak L")
-                        }
-                    }
-                }
-            }
-        }
-
-        // ── 统计行 ────────────────────────────────────────────────────────────
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                StatChip("Trades",   "${account.totalTrades}", Modifier.weight(1f))
-                StatChip("Win Rate", "${String.format("%.0f", winRate)}%", Modifier.weight(1f))
-                StatChip("Open Pos", if (account.openPosition != null) account.openPosition.direction.name else "—", Modifier.weight(1f))
-            }
-        }
-
-        // ── 当前持仓 ──────────────────────────────────────────────────────────
-        account.openPosition?.let { pos ->
-            item { PositionCard(pos) }
-        }
-
-        // ── 权益曲线 ──────────────────────────────────────────────────────────
-        if (account.dailySnapshots.size >= 2) {
-            item {
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("Equity Curve", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, modifier = Modifier.padding(bottom = 8.dp))
-                        CartesianChartHost(
-                            chart = rememberCartesianChart(
-                                rememberLineCartesianLayer(),
-                                startAxis  = rememberStartAxis(),
-                                bottomAxis = rememberBottomAxis(),
-                            ),
-                            modelProducer = producer,
-                            modifier      = Modifier.fillMaxWidth().height(160.dp),
-                        )
-                    }
-                }
-            }
-        }
-
-        // ── 交易记录 ──────────────────────────────────────────────────────────
-        if (account.trades.isNotEmpty()) {
-            item {
-                Text("Trade History", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
-            }
-            items(account.trades.reversed()) { trade ->
-                TradeRow(trade)
-            }
-        }
-
-        // ── 重置按钮 ──────────────────────────────────────────────────────────
-        item {
-            Spacer(Modifier.height(8.dp))
-            OutlinedButton(
-                onClick  = { vm.resetPaperAccount() },
-                modifier = Modifier.fillMaxWidth(),
-                colors   = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-            ) {
-                Text("Reset Paper Account  ($200 start)")
+                Text("No deals in the past 7 days",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-private fun AnalyticStat(label: String, value: String) {
+private fun AccountStat(label: String, value: String) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        Text(value, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         Text(label, fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -268,21 +177,10 @@ private fun BacktestStat(label: String, value: String) {
 }
 
 @Composable
-private fun StatChip(label: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier) {
-        Column(
-            Modifier.padding(10.dp).fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Text(value, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-            Text(label, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-    }
-}
-
-@Composable
-private fun PositionCard(pos: OpenPosition) {
-    val color = if (pos.direction == Signal.LONG) Color(0xFF00C853) else Color(0xFFD50000)
+private fun MtPositionCard(pos: MtPosition) {
+    val isBuy  = pos.type.contains("BUY")
+    val color  = if (isBuy) Color(0xFF00C853) else Color(0xFFD50000)
+    val pnlClr = if (pos.profit >= 0) Color(0xFF00C853) else Color(0xFFD50000)
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             Modifier.padding(14.dp).fillMaxWidth(),
@@ -290,48 +188,62 @@ private fun PositionCard(pos: OpenPosition) {
             verticalAlignment     = Alignment.CenterVertically,
         ) {
             Column {
-                Text("Open Position", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(pos.direction.name, color = color, fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                Text("Entry  $${String.format("%.2f", pos.entryPrice)}", fontSize = 12.sp)
+                Text(if (isBuy) "▲ LONG" else "▼ SHORT", color = color,
+                    fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(pos.symbol, fontSize = 12.sp)
+                Text("Entry  ${"%.5f".format(pos.openPrice)}", fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace)
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text("SL  $${String.format("%.2f", pos.stopLoss)}", color = Color(0xFFD50000), fontSize = 12.sp)
-                Text("TP  $${String.format("%.2f", pos.takeProfit)}", color = Color(0xFF00C853), fontSize = 12.sp)
-                Text("${String.format("%.4f", pos.quantity)} ETH", fontSize = 12.sp)
+                Text("${if (pos.profit >= 0) "+" else ""}${"%.2f".format(pos.profit)}",
+                    color = pnlClr, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                pos.stopLoss?.let {
+                    Text("SL  ${"%.5f".format(it)}", color = Color(0xFFD50000), fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace)
+                }
+                pos.takeProfit?.let {
+                    Text("TP  ${"%.5f".format(it)}", color = Color(0xFF00C853), fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace)
+                }
+                Text("${pos.volume} lot", fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
 }
 
 @Composable
-private fun TradeRow(trade: TradeRecord) {
-    val pnlColor = if (trade.pnl >= 0) Color(0xFF00C853) else Color(0xFFD50000)
-    val dateFmt  = remember { SimpleDateFormat("MM/dd HH:mm", Locale.US) }
+private fun DealRow(deal: MtDeal) {
+    val isBuy  = deal.type.contains("BUY")
+    val pnlClr = if (deal.profit >= 0) Color(0xFF00C853) else Color(0xFFD50000)
     Row(
-        Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
+        Modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment     = Alignment.CenterVertically,
     ) {
         Column {
             Text(
-                "${trade.direction.name}  ${trade.closeReason.name.replace('_', ' ')}",
-                fontWeight = FontWeight.SemiBold,
-                fontSize   = 13.sp,
+                "${if (isBuy) "▲" else "▼"} ${deal.symbol}",
+                fontWeight = FontWeight.SemiBold, fontSize = 13.sp,
             )
             Text(
-                "${dateFmt.format(Date(trade.openedAt))} → ${dateFmt.format(Date(trade.closedAt))}",
-                fontSize = 11.sp,
-                color    = MaterialTheme.colorScheme.onSurfaceVariant,
+                "Price: ${"%.5f".format(deal.price)}  Vol: ${deal.volume}",
+                fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontFamily = FontFamily.Monospace,
             )
         }
-        Text(
-            "${if (trade.pnl >= 0) "+" else ""}$${String.format("%.2f", trade.pnl)}",
-            color      = pnlColor,
-            fontWeight = FontWeight.Bold,
-            fontSize   = 14.sp,
-        )
+        Column(horizontalAlignment = Alignment.End) {
+            Text(
+                "${if (deal.profit >= 0) "+" else ""}${"%.2f".format(deal.profit)}",
+                color = pnlClr, fontWeight = FontWeight.Bold, fontSize = 13.sp,
+            )
+            if (deal.commission != 0.0 || deal.swap != 0.0) {
+                Text(
+                    "fee ${"%.2f".format(deal.commission + deal.swap)}",
+                    fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
     }
     HorizontalDivider(thickness = 0.5.dp)
 }

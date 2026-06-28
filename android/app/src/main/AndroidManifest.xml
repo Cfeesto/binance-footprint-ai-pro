@@ -12,7 +12,8 @@
     <application
         android:label="FootprintAI"
         android:theme="@style/Theme.FootprintAI"
-        android:supportsRtl="true">
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true">
 
         <activity
             android:name=".MainActivity"

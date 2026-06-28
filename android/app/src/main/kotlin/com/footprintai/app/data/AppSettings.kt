@@ -33,4 +33,22 @@ class AppSettings(ctx: Context) {
     var maxDrawdownPct: Float
         get() = prefs.getFloat("maxDrawdownPct", 0.30f)
         set(v) { prefs.edit().putFloat("maxDrawdownPct", v).apply() }
+
+    // ── MetaApi credentials ───────────────────────────────────────────────────
+    var metaApiToken: String
+        get() = prefs.getString("metaApiToken", "") ?: ""
+        set(v) { prefs.edit().putString("metaApiToken", v).apply() }
+
+    var metaApiAccountId: String
+        get() = prefs.getString("metaApiAccountId", "") ?: ""
+        set(v) { prefs.edit().putString("metaApiAccountId", v).apply() }
+
+    var metaApiRegion: String
+        get() = prefs.getString("metaApiRegion", "new-york") ?: "new-york"
+        set(v) { prefs.edit().putString("metaApiRegion", v).apply() }
+
+    /** MT5 symbol to execute on (e.g. ETHUSD, XAUUSD, EURUSD) */
+    var tradingSymbol: String
+        get() = prefs.getString("tradingSymbol", "ETHUSD") ?: "ETHUSD"
+        set(v) { prefs.edit().putString("tradingSymbol", v).apply() }
 }

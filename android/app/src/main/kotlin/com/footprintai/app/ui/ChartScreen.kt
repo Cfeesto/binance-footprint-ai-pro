@@ -1,5 +1,8 @@
 package com.footprintai.app.ui
 
+import android.annotation.SuppressLint
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -19,12 +22,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.footprintai.app.model.FootprintCandle
@@ -61,9 +66,11 @@ private data class InspectedLevel(
     val tapY:         Float,
 )
 
+@SuppressLint("SetJavaScriptEnabled")
 @Composable
 fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier) {
     val state by vm.state.collectAsStateWithLifecycle()
+    var showTv by remember { mutableStateOf(false) }  // false = Footprint, true = TradingView
 
     Column(modifier = modifier.fillMaxSize().background(BG)) {
         // ── 顶部栏 ─────────────────────────────────────────────────────────────
@@ -73,7 +80,25 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column {
-                Text("ETH/USDT · 5m", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                // Tab toggle: FP ↔ TV
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("ETH/USDT · 5m", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                    Spacer(Modifier.width(8.dp))
+                    // ponytail: plain TextButton pair, no TabRow overhead
+                    val fpColor = if (!showTv) GREEN else AXIS_TXT
+                    val tvColor = if (showTv)  GREEN else AXIS_TXT
+                    Text("FP", color = fpColor, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = androidx.compose.ui.Modifier
+                            .background(fpColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .pointerInput(Unit) { detectTapGestures { showTv = false } })
+                    Spacer(Modifier.width(4.dp))
+                    Text("TV", color = tvColor, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                        modifier = androidx.compose.ui.Modifier
+                            .background(tvColor.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                            .pointerInput(Unit) { detectTapGestures { showTv = true } })
+                }
                 val price = state.footprints.lastOrNull()?.close
                 if (price != null) {
                     val bull = state.footprints.lastOrNull()?.let { it.close >= it.open } == true
@@ -96,120 +121,170 @@ fun ChartScreen(vm: ChartViewModel = viewModel(), modifier: Modifier = Modifier)
         state.error?.let {
             Text(it, color = RED, fontSize = 10.sp, modifier = Modifier.padding(horizontal = 12.dp))
         }
+        state.mtError?.let {
+            Text("MT5: $it", color = Color(0xFFFF9800), fontSize = 10.sp,
+                modifier = Modifier.padding(horizontal = 12.dp))
+        }
 
-        // ── 图表区域 ────────────────────────────────────────────────────────────
-        val candles = state.footprints.takeLast(13)
-        if (candles.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = GREEN)
-            }
+        if (showTv) {
+            // ── TradingView Lightweight Charts WebView ──────────────────────
+            TvChartWebView(
+                klines      = state.klines,
+                position    = state.chartPosition(),
+                symbol      = state.appSettings.tradingSymbol,
+                modifier    = Modifier.fillMaxSize(),
+            )
         } else {
-            var scale      by remember { mutableFloatStateOf(1f) }
-            var offset     by remember { mutableStateOf(Offset.Zero) }
-            var autoFollow by remember { mutableStateOf(true) }
-            var inspected  by remember { mutableStateOf<InspectedLevel?>(null) }
+            // ── 足迹图（原有 Canvas 图表）───────────────────────────────────
+            val candles = state.footprints.takeLast(13)
+            if (candles.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = GREEN)
+                }
+            } else {
+                var scale      by remember { mutableFloatStateOf(1f) }
+                var offset     by remember { mutableStateOf(Offset.Zero) }
+                var autoFollow by remember { mutableStateOf(true) }
+                var inspected  by remember { mutableStateOf<InspectedLevel?>(null) }
 
-            // 自动跟随时重置变换
-            LaunchedEffect(autoFollow) {
-                if (autoFollow) { scale = 1f; offset = Offset.Zero }
-            }
-
-            val txState = rememberTransformableState { zoom, pan, _ ->
-                autoFollow = false  // 用户手动操作则解除跟随
-                scale  = (scale * zoom).coerceIn(0.3f, 10f)
-                offset = Offset(offset.x + pan.x, offset.y + pan.y)
-            }
-
-            Column(Modifier.weight(1f).fillMaxWidth()) {
-                // ── 主图 + VP侧栏 ──────────────────────────────────────────────
-                Row(Modifier.weight(3f).fillMaxWidth()) {
-                    // 足迹图主区域
-                    Box(Modifier.weight(1f).fillMaxHeight()) {
-                        FootprintChart(
-                            candles       = candles,
-                            signal        = state.lastResult?.signal,
-                            indicators    = state.indicators,
-                            openPosition  = state.paperAccount.openPosition,
-                            modifier      = Modifier
-                                .fillMaxSize()
-                                // tap 检测在 transformable 之前，避免被手势拦截
-                                .pointerInput(candles, scale, offset) {
-                                    detectTapGestures { tap ->
-                                        // 将屏幕坐标反变换为 Canvas 内部坐标
-                                        val pivX = size.width  / 2f
-                                        val pivY = size.height / 2f
-                                        val cx = (tap.x - pivX - offset.x) / scale + pivX
-                                        val cy = (tap.y - pivY - offset.y) / scale + pivY
-
-                                        val axisW      = 68f
-                                        val chartW     = size.width  - axisW
-                                        val chartH     = size.height - 24f
-                                        val tick       = ChartViewModel.TICK
-                                        val priceMin   = candles.minOf { it.low  } - tick
-                                        val priceMax   = candles.maxOf { it.high } + tick
-                                        val priceRange = (priceMax - priceMin).coerceAtLeast(1.0)
-                                        val colW       = chartW / candles.size
-
-                                        val idx    = (cx / colW).toInt().coerceIn(0, candles.lastIndex)
-                                        val candle = candles[idx]
-                                        val tPrice = priceMax - cy / chartH * priceRange
-                                        val bucket = floor(tPrice / tick) * tick
-                                        // 找最近的层级
-                                        val level  = candle.levels.minByOrNull { kotlin.math.abs(it.price - bucket) }
-
-                                        if (level != null && candle.levels.isNotEmpty()) {
-                                            val totalVol = candle.levels.sumOf { (it.buyVol + it.sellVol).toDouble() }.toFloat()
-                                            val pct = if (totalVol > 0) (level.buyVol + level.sellVol) / totalVol else 0f
-                                            inspected = InspectedLevel(
-                                                priceFrom   = level.price,
-                                                priceTo     = level.price + tick,
-                                                buyVol      = level.buyVol,
-                                                sellVol     = level.sellVol,
-                                                pctOfCandle = pct,
-                                                tapX        = tap.x,
-                                                tapY        = tap.y,
-                                            )
-                                        } else {
-                                            inspected = null
-                                        }
-                                    }
-                                }
-                                .transformable(txState)
-                                .graphicsLayer {
-                                    scaleX = scale; scaleY = scale
-                                    translationX = offset.x; translationY = offset.y
-                                },
-                        )
-
-                        // LIVE 自动跟随按钮（仅用户 pan/zoom 后显示）
-                        if (!autoFollow) {
-                            Button(
-                                onClick = { autoFollow = true; inspected = null },
-                                modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = RED.copy(alpha = 0.85f)),
-                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
-                            ) {
-                                Text("● LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                            }
-                        }
-
-                        // 点击检查弹窗
-                        inspected?.let { insp ->
-                            InspectOverlay(insp, onDismiss = { inspected = null })
-                        }
-                    }
-
-                    // 成交量纵向分布侧栏（不随主图缩放）
-                    VolumeProfileBar(candles = candles, modifier = Modifier.width(56.dp).fillMaxHeight())
+                LaunchedEffect(autoFollow) {
+                    if (autoFollow) { scale = 1f; offset = Offset.Zero }
                 }
 
-                // ── CVD 子图 ───────────────────────────────────────────────────
-                CvdSubplot(cvd = state.cvd, modifier = Modifier.fillMaxWidth().height(72.dp))
-                // ── ADX 子图 ───────────────────────────────────────────────────
-                AdxSubplot(adxHistory = state.adxHistory, modifier = Modifier.fillMaxWidth().height(70.dp))
+                val txState = rememberTransformableState { zoom, pan, _ ->
+                    autoFollow = false
+                    scale  = (scale * zoom).coerceIn(0.3f, 10f)
+                    offset = Offset(offset.x + pan.x, offset.y + pan.y)
+                }
+
+                Column(Modifier.weight(1f).fillMaxWidth()) {
+                    Row(Modifier.weight(3f).fillMaxWidth()) {
+                        Box(Modifier.weight(1f).fillMaxHeight()) {
+                            FootprintChart(
+                                candles      = candles,
+                                signal       = state.lastResult?.signal,
+                                indicators   = state.indicators,
+                                openPosition = state.chartPosition(),
+                                modifier     = Modifier
+                                    .fillMaxSize()
+                                    .pointerInput(candles, scale, offset) {
+                                        detectTapGestures { tap ->
+                                            val pivX = size.width  / 2f
+                                            val pivY = size.height / 2f
+                                            val cx = (tap.x - pivX - offset.x) / scale + pivX
+                                            val cy = (tap.y - pivY - offset.y) / scale + pivY
+
+                                            val axisW      = 68f
+                                            val chartW     = size.width  - axisW
+                                            val chartH     = size.height - 24f
+                                            val tick       = ChartViewModel.TICK
+                                            val priceMin   = candles.minOf { it.low  } - tick
+                                            val priceMax   = candles.maxOf { it.high } + tick
+                                            val priceRange = (priceMax - priceMin).coerceAtLeast(1.0)
+                                            val colW       = chartW / candles.size
+
+                                            val idx    = (cx / colW).toInt().coerceIn(0, candles.lastIndex)
+                                            val candle = candles[idx]
+                                            val tPrice = priceMax - cy / chartH * priceRange
+                                            val bucket = floor(tPrice / tick) * tick
+                                            val level  = candle.levels.minByOrNull { kotlin.math.abs(it.price - bucket) }
+
+                                            if (level != null && candle.levels.isNotEmpty()) {
+                                                val totalVol = candle.levels.sumOf { (it.buyVol + it.sellVol).toDouble() }.toFloat()
+                                                val pct = if (totalVol > 0) (level.buyVol + level.sellVol) / totalVol else 0f
+                                                inspected = InspectedLevel(
+                                                    priceFrom = level.price, priceTo = level.price + tick,
+                                                    buyVol = level.buyVol, sellVol = level.sellVol,
+                                                    pctOfCandle = pct, tapX = tap.x, tapY = tap.y,
+                                                )
+                                            } else { inspected = null }
+                                        }
+                                    }
+                                    .transformable(txState)
+                                    .graphicsLayer {
+                                        scaleX = scale; scaleY = scale
+                                        translationX = offset.x; translationY = offset.y
+                                    },
+                            )
+
+                            if (!autoFollow) {
+                                Button(
+                                    onClick = { autoFollow = true; inspected = null },
+                                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = RED.copy(alpha = 0.85f)),
+                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                ) {
+                                    Text("● LIVE", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                            inspected?.let { InspectOverlay(it, onDismiss = { inspected = null }) }
+                        }
+                        VolumeProfileBar(candles = candles, modifier = Modifier.width(56.dp).fillMaxHeight())
+                    }
+                    CvdSubplot(cvd = state.cvd, modifier = Modifier.fillMaxWidth().height(72.dp))
+                    AdxSubplot(adxHistory = state.adxHistory, modifier = Modifier.fillMaxWidth().height(70.dp))
+                }
             }
         }
     }
+}
+
+// ── TradingView WebView ──────────────────────────────────────────────────────────
+
+@SuppressLint("SetJavaScriptEnabled")
+@Composable
+private fun TvChartWebView(
+    klines:   List<com.footprintai.app.model.Kline>,
+    position: OpenPosition?,
+    symbol:   String,
+    modifier: Modifier,
+) {
+    val webViewRef = remember { mutableStateOf<WebView?>(null) }
+
+    // Push bars to WebView whenever klines update
+    LaunchedEffect(klines) {
+        val wv = webViewRef.value ?: return@LaunchedEffect
+        if (klines.isEmpty()) return@LaunchedEffect
+        val bars = klines.joinToString(",") { k ->
+            "{\"time\":${k.openTime / 1000},\"open\":${k.open},\"high\":${k.high},\"low\":${k.low},\"close\":${k.close}}"
+        }
+        // Last bar = live update, rest = bulk set
+        if (klines.size > 1) {
+            val allButLast = klines.dropLast(1).joinToString(",") { k ->
+                "{\"time\":${k.openTime / 1000},\"open\":${k.open},\"high\":${k.high},\"low\":${k.low},\"close\":${k.close}}"
+            }
+            wv.evaluateJavascript("updateBars('[${allButLast}]')", null)
+        }
+        val last = klines.last()
+        wv.evaluateJavascript(
+            "updateLastBar('{\"time\":${last.openTime / 1000},\"open\":${last.open},\"high\":${last.high},\"low\":${last.low},\"close\":${last.close}}')",
+            null
+        )
+    }
+
+    // Push SL/TP position overlay
+    LaunchedEffect(position) {
+        val wv = webViewRef.value ?: return@LaunchedEffect
+        val json = if (position != null)
+            "{\"stopLoss\":${position.stopLoss},\"takeProfit\":${position.takeProfit}}"
+        else "null"
+        wv.evaluateJavascript("updatePosition('$json')", null)
+    }
+
+    AndroidView(
+        modifier = modifier,
+        factory = { ctx ->
+            WebView(ctx).also { wv ->
+                wv.settings.javaScriptEnabled = true
+                wv.settings.domStorageEnabled  = true
+                wv.webViewClient = WebViewClient()
+                wv.loadUrl("file:///android_asset/chart.html")
+                wv.evaluateJavascript("setSymbol('$symbol')", null)
+                webViewRef.value = wv
+            }
+        },
+        update = { wv -> webViewRef.value = wv },
+    )
 }
 
 // ── 足迹主图 Canvas ─────────────────────────────────────────────────────────────
