@@ -93,7 +93,7 @@ private fun SignalRow(r: InferenceResult) {
                 fontFamily = FontFamily.Monospace,
             )
             Text(
-                "CB ${(r.probCat*100).toInt()}  XGB ${(r.probXgb*100).toInt()}  RF ${(r.probRf*100).toInt()}",
+                "LOR ${(r.probLor*100).toInt()}  CB ${(r.probCat*100).toInt()}  XGB ${(r.probXgb*100).toInt()}  RF ${(r.probRf*100).toInt()}",
                 fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 fontFamily = FontFamily.Monospace,
             )

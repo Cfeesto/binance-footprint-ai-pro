@@ -45,7 +45,7 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
                 label    = "SHORT Threshold",
                 value    = shortThresh,
                 valueStr = "%.2f".format(shortThresh),
-                range    = 0.30f..0.65f,
+                range    = 0.15f..0.45f,
                 onValue  = { shortThresh = it },
                 onDone   = { vm.updateSettings(s.copy(shortThresh = shortThresh)) },
                 hint     = "Signal fires when ensemble ≤ this value",
@@ -58,7 +58,7 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
                 label    = "LONG Threshold",
                 value    = longThresh,
                 valueStr = "%.2f".format(longThresh),
-                range    = 0.40f..0.75f,
+                range    = 0.55f..0.85f,
                 onValue  = { longThresh = it },
                 onDone   = { vm.updateSettings(s.copy(longThresh = longThresh)) },
                 hint     = "Signal fires when ensemble ≥ this value",
@@ -134,8 +134,8 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
         item {
             Spacer(Modifier.height(8.dp))
             Text(
-                "Model: CatBoost 45% · XGBoost 35% · RF 20%\n" +
-                "Feature window: 500 bars  ·  Tick size: \$1.00",
+                "Model: Lorentzian 35% · CatBoost 30% · XGBoost 25% · RF 10%\n" +
+                "Feature window: 500 bars  ·  Training window: 2000 bars",
                 fontSize = 11.sp,
                 color    = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 16.sp,

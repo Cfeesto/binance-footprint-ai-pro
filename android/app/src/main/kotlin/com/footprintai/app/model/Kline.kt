@@ -18,6 +18,7 @@ enum class Signal { LONG, SHORT, NEUTRAL }
 data class InferenceResult(
     val signal:   Signal,
     val prob:     Float,   // ensemble 概率 [0,1]
+    val probLor:  Float,   // Lorentzian KNN 单模型概率
     val probCat:  Float,   // CatBoost 单模型概率
     val probXgb:  Float,   // XGBoost 单模型概率
     val probRf:   Float,   // RandomForest 单模型概率

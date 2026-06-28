@@ -119,8 +119,7 @@ fun PortfolioScreen(vm: ChartViewModel = viewModel()) {
                     // Lorentzian 披露
                     HorizontalDivider(thickness = 0.5.dp)
                     Text(
-                        "⚠ Lorentzian KNN (35% backtest weight) not deployed on Android — " +
-                        "app runs CatBoost 45% · XGBoost 35% · RF 20%",
+                        "✓ Full 4-model ensemble: Lorentzian 35% · CatBoost 30% · XGBoost 25% · RF 10%",
                         fontSize = 10.sp,
                         color    = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f),
                         lineHeight = 14.sp,

@@ -214,7 +214,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                     longThresh  = engine.longThresh,
                 )
 
-                val result = InferenceResult(out.signal, out.ensemble, out.probCat, out.probXgb, out.probRf, kline)
+                val result = InferenceResult(out.signal, out.ensemble, out.probLor, out.probCat, out.probXgb, out.probRf, kline)
                 _state.update { st ->
                     val newLog = if (out.signal != Signal.NEUTRAL)
                         (st.signalLog + result).takeLast(100)

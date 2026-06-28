@@ -11,6 +11,7 @@ import java.nio.FloatBuffer
 data class InferenceOutput(
     val signal:   Signal,
     val ensemble: Float,
+    val probLor:  Float,
     val probCat:  Float,
     val probXgb:  Float,
     val probRf:   Float,
@@ -19,9 +20,10 @@ data class InferenceOutput(
 /**
  * OnnxInferenceEngine
  * ───────────────────
- * 加载 3 个 ONNX 模型（CatBoost / XGBoost / RandomForest），
- * 加权平均概率，与阈值比对输出 LONG / SHORT / NEUTRAL。
+ * 加载 3 个 ONNX 模型（CatBoost / XGBoost / RandomForest）+
+ * 原生 Lorentzian KNN 分类器，加权平均概率，与阈值比对输出信号。
  *
+ * 权重: Lorentzian 35% · CatBoost 30% · XGBoost 25% · RF 10%
  * 模型文件放在 assets/ 下，首次调用 init() 时懒加载。
  */
 class OnnxInferenceEngine(private val ctx: Context) {
@@ -31,39 +33,46 @@ class OnnxInferenceEngine(private val ctx: Context) {
     private lateinit var xgbSess:   OrtSession
     private lateinit var rfSess:    OrtSession
 
-    var longThresh:  Float = 0.680f
-    var shortThresh: Float = 0.211f
+    private val lorentzian = LorentzianClassifier(ctx)
 
-    // 默认权重（Lorentzian 权重已重新分配，见 export_onnx.py 注释）
-    private var wCat: Float = 0.45f
-    private var wXgb: Float = 0.35f
-    private var wRf:  Float = 0.20f
+    var longThresh:  Float = 0.64f
+    var shortThresh: Float = 0.25f
+
+    private var wLor: Float = 0.35f
+    private var wCat: Float = 0.30f
+    private var wXgb: Float = 0.25f
+    private var wRf:  Float = 0.10f
 
     /** 必须在后台线程调用 */
     fun init() {
         try {
             env = OrtEnvironment.getEnvironment()
+            val opts = OrtSession.SessionOptions().apply { setIntraOpNumThreads(2) }
 
-        val opts = OrtSession.SessionOptions().apply {
-            setIntraOpNumThreads(2)
-        }
+            catSess = env.createSession(loadAsset("catboost.onnx"), opts)
+            xgbSess = env.createSession(loadAsset("xgboost.onnx"), opts)
+            rfSess  = env.createSession(loadAsset("rf.onnx"), opts)
 
-        catSess = env.createSession(loadAsset("catboost.onnx"), opts)
-        xgbSess = env.createSession(loadAsset("xgboost.onnx"), opts)
-        rfSess  = env.createSession(loadAsset("rf.onnx"), opts)
-
-        // 读阈值
-        ctx.assets.open("thresholds.json").bufferedReader().use { r ->
-            val j = JSONObject(r.readText())
-            longThresh  = j.getDouble("long_thresh").toFloat()
-            shortThresh = j.getDouble("short_thresh").toFloat()
-            val w = j.optJSONObject("weights")
-            if (w != null) {
-                wCat = w.getDouble("catboost").toFloat()
-                wXgb = w.getDouble("xgboost").toFloat()
-                wRf  = w.getDouble("rf").toFloat()
+            // 读阈值 + Lorentzian 特征索引
+            ctx.assets.open("thresholds.json").bufferedReader().use { r ->
+                val j = JSONObject(r.readText())
+                longThresh  = j.getDouble("long_thresh").toFloat()
+                shortThresh = j.getDouble("short_thresh").toFloat()
+                val w = j.optJSONObject("weights")
+                if (w != null) {
+                    wLor = w.optDouble("lorentzian", 0.35).toFloat()
+                    wCat = w.getDouble("catboost").toFloat()
+                    wXgb = w.getDouble("xgboost").toFloat()
+                    wRf  = w.getDouble("rf").toFloat()
+                }
+                val lorIdxArr = j.optJSONArray("lorentzian_feature_indices")
+                val lorIdx = if (lorIdxArr != null) {
+                    IntArray(lorIdxArr.length()) { lorIdxArr.getInt(it) }
+                } else {
+                    intArrayOf(15, 20, 16, 17, 2, 0, 28, 29, 33, 34)
+                }
+                lorentzian.init(lorIdx)
             }
-        }
         } catch (e: Exception) {
             throw RuntimeException("Inference Engine Init Error: ${e.message}")
         }
@@ -74,28 +83,28 @@ class OnnxInferenceEngine(private val ctx: Context) {
      * @return InferenceOutput  信号 + ensemble 概率 + 各模型概率
      */
     fun infer(features: FloatArray): InferenceOutput {
-        val shape    = longArrayOf(1, features.size.toLong())
-        val buf      = FloatBuffer.wrap(features)
-        val tensor   = OnnxTensor.createTensor(env, buf, shape)
+        val shape  = longArrayOf(1, features.size.toLong())
+        val buf    = FloatBuffer.wrap(features)
+        val tensor = OnnxTensor.createTensor(env, buf, shape)
 
-        // ponytail: CatBoost ONNX 输出 label + probabilities，取 probabilities[0][1]
-        val pCat = runSession(catSess, tensor, isCatboost = true)
-        val pXgb = runSession(xgbSess, tensor, isCatboost = false)
-        val pRf  = runSession(rfSess,  tensor, isCatboost = false)
-
+        val pCat = runSession(catSess, tensor)
+        val pXgb = runSession(xgbSess, tensor)
+        val pRf  = runSession(rfSess,  tensor)
         tensor.close()
 
-        val ensemble = wCat * pCat + wXgb * pXgb + wRf * pRf
+        val pLor = lorentzian.predict(features)
+
+        val ensemble = wLor * pLor + wCat * pCat + wXgb * pXgb + wRf * pRf
 
         val signal = when {
             ensemble >= longThresh  -> Signal.LONG
             ensemble <= shortThresh -> Signal.SHORT
             else                    -> Signal.NEUTRAL
         }
-        return InferenceOutput(signal, ensemble, pCat, pXgb, pRf)
+        return InferenceOutput(signal, ensemble, pLor, pCat, pXgb, pRf)
     }
 
-    private fun runSession(sess: OrtSession, tensor: OnnxTensor, isCatboost: Boolean): Float {
+    private fun runSession(sess: OrtSession, tensor: OnnxTensor): Float {
         val inputName = sess.inputNames.iterator().next()
         val out = sess.run(mapOf(inputName to tensor))
         return try { extractProb(out) } finally { out.forEach { it.value.close() } }
@@ -103,21 +112,19 @@ class OnnxInferenceEngine(private val ctx: Context) {
 
     /**
      * 多策略概率提取，兼容不同 ONNX 导出格式：
-     *  S1 — float[N][2]  (XGBoost skl2onnx, 部分 CatBoost)
-     *  S2 — List<Map>    (RF skl2onnx: Sequence<Map<int64,float>>)
-     *  S3 — Array<Map>   (部分 skl2onnx 变体)
-     *  S4 — FloatArray   (CatBoost 扁平化 [p0,p1,...])
-     *  S5 — output[0] 标量 Float
+     *  S1 — float[N][2]  (all models after zipmap=False fix)
+     *  S2 — List<Map>    (legacy sequence format)
+     *  S3 — Array<Map>
+     *  S4 — flat FloatArray
+     *  S5 — scalar fallback
      */
     @Suppress("UNCHECKED_CAST")
     private fun extractProb(out: OrtSession.Result): Float {
-        // S1: Array<FloatArray> — most common (XGBoost skl2onnx, CatBoost)
         try {
             val probs = out[1].value as? Array<FloatArray>
             if (probs != null) return probs[0][1]
         } catch (_: Exception) {}
 
-        // S2: List<Map<*,*>> — RF skl2onnx Sequence<Map<int64,float>>
         try {
             val raw = out[1].value
             if (raw is List<*>) {
@@ -126,7 +133,6 @@ class OnnxInferenceEngine(private val ctx: Context) {
             }
         } catch (_: Exception) {}
 
-        // S3: Array<Map<*,*>>
         try {
             val arr = out[1].value as? Array<*>
             if (arr != null && arr.isNotEmpty()) {
@@ -135,13 +141,11 @@ class OnnxInferenceEngine(private val ctx: Context) {
             }
         } catch (_: Exception) {}
 
-        // S4: flat FloatArray [p_class0, p_class1]
         try {
             val flat = out[1].value as? FloatArray
             if (flat != null && flat.size >= 2) return flat[1]
         } catch (_: Exception) {}
 
-        // S5: output[0] scalar (some CatBoost exports)
         return (out[0].value as? Float) ?: 0.5f
     }
 
