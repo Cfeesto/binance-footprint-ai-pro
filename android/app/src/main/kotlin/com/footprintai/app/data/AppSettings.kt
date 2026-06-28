@@ -51,4 +51,10 @@ class AppSettings(ctx: Context) {
     var tradingSymbol: String
         get() = prefs.getString("tradingSymbol", "ETHUSD") ?: "ETHUSD"
         set(v) { prefs.edit().putString("tradingSymbol", v).apply() }
+
+    // ── TradingView webhook ────────────────────────────────────────────────────
+    /** User-chosen key for the TV webhook — matches ?key= in the URL */
+    var tvWebhookKey: String
+        get() = prefs.getString("tvWebhookKey", "") ?: ""
+        set(v) { prefs.edit().putString("tvWebhookKey", v).apply() }
 }

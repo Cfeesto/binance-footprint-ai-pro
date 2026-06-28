@@ -1,11 +1,16 @@
 package com.footprintai.app.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
@@ -19,6 +24,8 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
     val state by vm.state.collectAsStateWithLifecycle()
     val s = state.appSettings
 
+    val ctx = LocalContext.current
+
     // Local edit state (don't save on every keystroke for text fields)
     var shortThresh    by remember(s) { mutableFloatStateOf(s.shortThresh) }
     var longThresh     by remember(s) { mutableFloatStateOf(s.longThresh) }
@@ -30,12 +37,66 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
     var metaAccountId  by remember(s) { mutableStateOf(s.metaApiAccountId) }
     var metaRegion     by remember(s) { mutableStateOf(s.metaApiRegion) }
     var tradingSymbol  by remember(s) { mutableStateOf(s.tradingSymbol) }
+    var tvKey          by remember(s) { mutableStateOf(s.tvWebhookKey) }
     var showToken      by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // ── TradingView webhook ───────────────────────────────────────────────
+        item {
+            Text("TradingView Webhook", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                "Any TradingView strategy can paper trade by posting alerts to your webhook URL.",
+                fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 17.sp,
+            )
+        }
+
+        item {
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(
+                        value         = tvKey,
+                        onValueChange = { tvKey = it },
+                        label         = { Text("Webhook Key (≥6 chars)") },
+                        singleLine    = true,
+                        placeholder   = { Text("my-secret-key") },
+                        modifier      = Modifier.fillMaxWidth(),
+                    )
+                    val webhookUrl = "https://openclawapi.org/api/tv/webhook?key=${tvKey.trim().ifBlank { "<your-key>" }}"
+                    Text(
+                        "Webhook URL:",
+                        fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                    )
+                    Text(
+                        webhookUrl,
+                        fontSize = 10.sp, fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick  = {
+                                val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cm.setPrimaryClip(ClipData.newPlainText("webhook_url", webhookUrl))
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Copy URL", fontSize = 12.sp) }
+                        Button(
+                            onClick  = { vm.updateSettings(s.copy(tvWebhookKey = tvKey.trim())) },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Save Key", fontSize = 12.sp) }
+                    }
+                    Text(
+                        "Alert message JSON: {\"action\":\"buy\",\"symbol\":\"ETHUSD\",\"price\":\"{{close}}\",\"interval\":\"{{interval}}\",\"time\":\"{{timenow}}\"}",
+                        fontSize = 9.sp, fontFamily = FontFamily.Monospace,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 13.sp,
+                    )
+                }
+            }
+        }
+
         // ── MetaApi credentials ───────────────────────────────────────────────
         item {
             Text("MetaApi (MT5 Gateway)", fontWeight = FontWeight.Bold, fontSize = 18.sp)

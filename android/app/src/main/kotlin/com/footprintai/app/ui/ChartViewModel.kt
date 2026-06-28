@@ -12,9 +12,11 @@ import com.footprintai.app.data.MetaApiClient
 import com.footprintai.app.data.MtAccountInfo
 import com.footprintai.app.data.MtDeal
 import com.footprintai.app.data.MtPosition
+import com.footprintai.app.data.PaperTradeStore
 import com.footprintai.app.inference.FeatureBuilder
 import com.footprintai.app.inference.LiveTradeEngine
 import com.footprintai.app.inference.OnnxInferenceEngine
+import com.footprintai.app.inference.PaperTradeEngine
 import com.footprintai.app.model.*
 import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
@@ -54,6 +56,7 @@ data class AppSettingsState(
     val metaApiAccountId:  String  = "",
     val metaApiRegion:     String  = "new-york",
     val tradingSymbol:     String  = "ETHUSD",
+    val tvWebhookKey:      String  = "",
 )
 
 data class ChartState(
@@ -62,6 +65,8 @@ data class ChartState(
     val lastResult:   InferenceResult?      = null,
     val error:        String?               = null,
     val engineReady:  Boolean               = false,
+    // ── Paper trading (TradingView webhook) ──────────────────────────────────
+    val paperAccount: PaperAccount          = PaperAccount(),
     // ── Live MT5 (MetaApi) ───────────────────────────────────────────────────
     val mtAccount:    MtAccountInfo?        = null,
     val mtPositions:  List<MtPosition>      = emptyList(),
@@ -94,13 +99,17 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
     private val _state = MutableStateFlow(ChartState())
     val state: StateFlow<ChartState> = _state.asStateFlow()
 
-    private val settings    = AppSettings(app)
-    private val repo        = BinanceRepository()
-    private val engine      = OnnxInferenceEngine(app)
+    private val settings     = AppSettings(app)
+    private val repo         = BinanceRepository()
+    private val engine       = OnnxInferenceEngine(app)
+    private val paperEngine  = PaperTradeEngine(PaperTradeStore(app))
 
     // ponytail: both nullable — only set when credentials are present
     private var mtClient:   MetaApiClient?   = null
     private var liveEngine: LiveTradeEngine? = null
+
+    // ponytail: receivedAt dedup — ignore signal we've already processed
+    private var lastTvReceivedAt: Long = 0L
 
     private val window     = ArrayDeque<Kline>(300)
     companion object { const val TICK = 1.0 }
@@ -118,7 +127,10 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         applySettingsToEngines()
-        _state.update { it.copy(appSettings = currentSettingsState()) }
+        _state.update { it.copy(
+            appSettings  = currentSettingsState(),
+            paperAccount = paperEngine.state,
+        ) }
         connectMetaApi()
         viewModelScope.launch(Dispatchers.IO) {
             initEngine()
@@ -128,6 +140,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             collectAggTrades()
         }
         startMtPoller()
+        startTvPoller()
     }
 
     // ── MetaApi connection ────────────────────────────────────────────────────
@@ -153,6 +166,28 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             refreshMtAccount()
         }
     }
+
+    private fun startTvPoller() = viewModelScope.launch(Dispatchers.IO) {
+        while (true) {
+            delay(5_000)
+            val key = settings.tvWebhookKey.trim()
+            if (key.isBlank()) continue
+            try {
+                val sig = repo.fetchTvSignal(key) ?: continue
+                if (sig.receivedAt <= lastTvReceivedAt) continue   // already processed
+                lastTvReceivedAt = sig.receivedAt
+                paperEngine.onTvSignal(
+                    action    = sig.action,
+                    price     = sig.price,
+                    timestamp = sig.receivedAt,
+                    strategy  = sig.symbol,
+                )
+                _state.update { it.copy(paperAccount = paperEngine.state) }
+            } catch (_: Exception) {}
+        }
+    }
+
+    fun resetPaperAccount() { paperEngine.reset(); _state.update { it.copy(paperAccount = paperEngine.state) } }
 
     private suspend fun refreshMtAccount() {
         val client = mtClient ?: return
@@ -196,6 +231,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         metaApiAccountId = settings.metaApiAccountId,
         metaApiRegion    = settings.metaApiRegion,
         tradingSymbol    = settings.tradingSymbol,
+        tvWebhookKey     = settings.tvWebhookKey,
     )
 
     fun updateSettings(s: AppSettingsState) {
@@ -209,6 +245,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         settings.metaApiAccountId = s.metaApiAccountId
         settings.metaApiRegion    = s.metaApiRegion
         settings.tradingSymbol    = s.tradingSymbol
+        settings.tvWebhookKey     = s.tvWebhookKey
         connectMetaApi()
         applySettingsToEngines()
         _state.update { it.copy(appSettings = s) }

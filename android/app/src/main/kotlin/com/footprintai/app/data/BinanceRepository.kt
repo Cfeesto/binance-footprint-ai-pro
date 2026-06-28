@@ -24,6 +24,15 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+data class TvSignal(
+    val action:     String,
+    val symbol:     String,
+    val price:      Double,
+    val interval:   String,
+    val time:       String,
+    val receivedAt: Long,
+)
+
 class BinanceRepository(
     val symbol: String = "ethusdt",
     val interval: String = "5m",
@@ -75,6 +84,24 @@ class BinanceRepository(
         }.toString().toRequestBody(JSON)
         okhttp.newCall(Request.Builder().url("$backendBaseUrl/signal").post(body).build())
             .execute().use { if (!it.isSuccessful) throw IOException("Unexpected code $it") }
+    }
+
+    /** Poll latest TradingView signal for given key. Returns null on 204 (no signal yet). */
+    suspend fun fetchTvSignal(key: String): TvSignal? = withContext(Dispatchers.IO) {
+        val resp = okhttp.newCall(
+            Request.Builder().url("https://openclawapi.org/api/tv/signal?key=${key}").build()
+        ).execute()
+        if (resp.code == 204) return@withContext null
+        val body = resp.body?.string() ?: return@withContext null
+        val j = JSONObject(body)
+        TvSignal(
+            action     = j.getString("action"),
+            symbol     = j.getString("symbol"),
+            price      = j.getDouble("price"),
+            interval   = j.optString("interval", ""),
+            time       = j.optString("time", ""),
+            receivedAt = j.optLong("receivedAt", 0L),
+        )
     }
 
     suspend fun getAccountStatus(): String = withContext(Dispatchers.IO) {
