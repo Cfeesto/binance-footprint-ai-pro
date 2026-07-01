@@ -8,6 +8,22 @@ android {
     namespace         = "com.footprintai.app"
     compileSdk        = 35
 
+    signingConfigs {
+        create("release") {
+            storeFile     = file("release.jks")
+            storePassword = "footprintai2024"
+            keyAlias      = "footprintai"
+            keyPassword   = "footprintai2024"
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled   = false
+            signingConfig     = signingConfigs.getByName("release")
+        }
+    }
+
     defaultConfig {
         applicationId       = "com.footprintai.app"
         minSdk              = 26
