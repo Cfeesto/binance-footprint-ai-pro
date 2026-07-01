@@ -1,5 +1,9 @@
 fastapi
-uvicorn
-python-dotenv
-requests
+uvicorn[standard]
 websockets
+onnxruntime
+numpy
+requests
+python-dotenv
+hyperliquid-python-sdk
+eth-account

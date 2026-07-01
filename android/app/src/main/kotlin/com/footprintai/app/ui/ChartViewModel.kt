@@ -8,18 +8,16 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.footprintai.app.data.AppSettings
 import com.footprintai.app.data.BinanceRepository
-import com.footprintai.app.data.MetaApiClient
-import com.footprintai.app.data.MtAccountInfo
-import com.footprintai.app.data.MtDeal
-import com.footprintai.app.data.MtPosition
 import com.footprintai.app.data.PaperTradeStore
+import com.footprintai.app.data.Ticker24h
+import org.json.JSONArray
 import com.footprintai.app.inference.FeatureBuilder
-import com.footprintai.app.inference.LiveTradeEngine
 import com.footprintai.app.inference.OnnxInferenceEngine
 import com.footprintai.app.inference.PaperTradeEngine
 import com.footprintai.app.model.*
 import kotlin.math.sqrt
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,6 +30,13 @@ import kotlinx.coroutines.sync.withLock
 import kotlin.math.floor
 
 data class AdxPoint(val adx: Float, val plusDi: Float, val minusDi: Float)
+
+data class ScannerRow(
+    val symbol:        String = "",
+    val price:         Double = 0.0,
+    val confluencePct: Int    = 0,
+    val signal:        String = "NONE",  // LONG | SHORT | NONE
+)
 
 data class IndicatorState(
     val bbUpper:     Double,
@@ -46,78 +51,86 @@ data class IndicatorState(
 )
 
 data class AppSettingsState(
-    val shortThresh:       Float   = 0.25f,
-    val longThresh:        Float   = 0.64f,
-    val riskPct:           Float   = 0.02f,
-    val slAtrMult:         Float   = 1.5f,
-    val enableLong:        Boolean = true,
-    val maxDrawdownPct:    Float   = 0.30f,
-    val metaApiToken:      String  = "",
-    val metaApiAccountId:  String  = "",
-    val metaApiRegion:     String  = "new-york",
-    val tradingSymbol:     String  = "ETHUSD",
-    val tvWebhookKey:      String  = "",
+    val shortThresh:      Float   = 0.25f,
+    val longThresh:       Float   = 0.64f,
+    val riskPct:          Float   = 0.02f,
+    val slAtrMult:        Float   = 1.5f,
+    val enableLong:       Boolean = true,
+    val maxDrawdownPct:   Float   = 0.30f,
+    val tvWebhookKey:     String  = "",
+    // ── VPS + Exchange ────────────────────────────────────────────────────────
+    val vpsWsUrl:         String  = "",
+    val vpsApiUrl:        String  = "",
+    val liveExchange:     String  = "binance",
+    val binanceApiKey:    String  = "",
+    val binanceApiSecret: String  = "",
+    val hlPrivateKey:     String  = "",
+    val bybitApiKey:      String  = "",
+    val bybitApiSecret:   String  = "",
+    val okxApiKey:        String  = "",
+    val okxApiSecret:     String  = "",
+    val okxPassphrase:    String  = "",
 )
 
 data class ChartState(
-    val klines:       List<Kline>           = emptyList(),
-    val footprints:   List<FootprintCandle> = emptyList(),
-    val lastResult:   InferenceResult?      = null,
-    val error:        String?               = null,
-    val engineReady:  Boolean               = false,
+    val klines:          List<Kline>           = emptyList(),
+    val footprints:      List<FootprintCandle> = emptyList(),
+    val lastResult:      InferenceResult?      = null,
+    val error:           String?               = null,
+    val engineReady:     Boolean               = false,
     // ── Paper trading (TradingView webhook) ──────────────────────────────────
-    val paperAccount: PaperAccount          = PaperAccount(),
-    // ── Live MT5 (MetaApi) ───────────────────────────────────────────────────
-    val mtAccount:    MtAccountInfo?        = null,
-    val mtPositions:  List<MtPosition>      = emptyList(),
-    val mtDeals:      List<MtDeal>          = emptyList(),
-    val mtConnected:  Boolean               = false,
-    val mtError:      String?               = null,
+    val paperAccount:    PaperAccount          = PaperAccount(),
+    // ── VPS signal ────────────────────────────────────────────────────────────
+    val vpsSignal:       com.footprintai.app.data.VpsSignal? = null,
+    val vpsConnected:    Boolean               = false,
     // ── Chart indicators ─────────────────────────────────────────────────────
-    val cvd:          List<Float>           = emptyList(),
-    val adxHistory:   List<AdxPoint>        = emptyList(),
-    val indicators:   IndicatorState?       = null,
-    val signalLog:    List<InferenceResult> = emptyList(),
-    val appSettings:  AppSettingsState      = AppSettingsState(),
+    val cvd:             List<Float>           = emptyList(),
+    val adxHistory:      List<AdxPoint>        = emptyList(),
+    val indicators:      IndicatorState?       = null,
+    val signalLog:       List<InferenceResult> = emptyList(),
+    val appSettings:     AppSettingsState      = AppSettingsState(),
+    // ── Symbol / TF selection ─────────────────────────────────────────────────
+    val selectedSymbol:  String                = "ETHUSDT",
+    val selectedTimeframe: String              = "5m",
+    // ── MTF confluence ────────────────────────────────────────────────────────
+    val confluenceScore: Int                   = 0,
+    val confluenceMax:   Int                   = 5,
+    val tfSignals:       Map<String, String>   = emptyMap(),
+    // ── Market scanner + 24h stats ────────────────────────────────────────────
+    val scannerRows:     List<ScannerRow>      = emptyList(),
+    val ticker24h:       Ticker24h?            = null,
 )
-
-/** Converts the first MT5 position to OpenPosition for chart SL/TP overlay */
-fun ChartState.chartPosition(): OpenPosition? {
-    val pos = mtPositions.firstOrNull() ?: return null
-    val dir = when {
-        pos.type.contains("BUY")  -> Signal.LONG
-        pos.type.contains("SELL") -> Signal.SHORT
-        else -> return null
-    }
-    val sl = pos.stopLoss  ?: if (dir == Signal.LONG) pos.openPrice * 0.97 else pos.openPrice * 1.03
-    val tp = pos.takeProfit ?: if (dir == Signal.LONG) pos.openPrice * 1.06 else pos.openPrice * 0.94
-    return OpenPosition(dir, pos.openPrice, pos.volume, 0L, sl, tp)
-}
 
 class ChartViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _state = MutableStateFlow(ChartState())
     val state: StateFlow<ChartState> = _state.asStateFlow()
 
-    private val settings     = AppSettings(app)
-    private val repo         = BinanceRepository()
-    private val engine       = OnnxInferenceEngine(app)
-    private val paperEngine  = PaperTradeEngine(PaperTradeStore(app))
-
-    // ponytail: both nullable — only set when credentials are present
-    private var mtClient:   MetaApiClient?   = null
-    private var liveEngine: LiveTradeEngine? = null
+    private val settings    = AppSettings(app)
+    private val engine      = OnnxInferenceEngine(app)
+    private val paperEngine = PaperTradeEngine(PaperTradeStore(app))
+    private val vpsClient   = com.footprintai.app.data.VpsSignalClient()
 
     // ponytail: receivedAt dedup — ignore signal we've already processed
     private var lastTvReceivedAt: Long = 0L
 
-    private val window     = ArrayDeque<Kline>(300)
-    companion object { const val TICK = 1.0 }
     private val mu         = Mutex()
-    private val liveLevels = HashMap<Double, Pair<Float, Float>>(512)
     private val adxDeque   = ArrayDeque<AdxPoint>(22)
     private val fpDeque    = ArrayDeque<FootprintCandle>(22)
     private val cvdDeque   = ArrayDeque<Float>(22)
+
+    // ── Dynamic repo + per-stream Jobs ────────────────────────────────────────
+    private val window     = ArrayDeque<Kline>(300)
+    private val liveLevels = HashMap<Double, Pair<Float, Float>>(512)
+    companion object { const val TICK = 1.0 }
+
+    private var repo: BinanceRepository = BinanceRepository(
+        _state.value.selectedSymbol.lowercase(),
+        _state.value.selectedTimeframe,
+    )
+    private var liveKlinesJob:  Job? = null
+    private var closedKlinesJob: Job? = null
+    private var aggTradesJob:   Job? = null
 
     private val nm = app.getSystemService(NotificationManager::class.java).also {
         it.createNotificationChannel(
@@ -131,41 +144,40 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             appSettings  = currentSettingsState(),
             paperAccount = paperEngine.state,
         ) }
-        connectMetaApi()
-        viewModelScope.launch(Dispatchers.IO) {
-            initEngine()
-            loadHistory()
-            collectLiveKlines()
-            collectClosedKlines()
-            collectAggTrades()
-        }
-        startMtPoller()
+        viewModelScope.launch(Dispatchers.IO) { initEngine() }
+        startDataStreams(_state.value.selectedSymbol, _state.value.selectedTimeframe)
         startTvPoller()
+        startVpsSignalCollector()
+        startScannerPoller()
+        if (settings.vpsWsUrl.isNotBlank()) vpsClient.connect(settings.vpsWsUrl)
     }
 
-    // ── MetaApi connection ────────────────────────────────────────────────────
+    // ── Stream restart ────────────────────────────────────────────────────────
 
-    private fun connectMetaApi() {
-        val token = settings.metaApiToken
-        val id    = settings.metaApiAccountId
-        if (token.isBlank() || id.isBlank()) {
-            mtClient   = null
-            liveEngine = null
-            _state.update { it.copy(mtConnected = false) }
-            return
-        }
-        val client = MetaApiClient(token, id, settings.metaApiRegion)
-        mtClient   = client
-        liveEngine = LiveTradeEngine(client).also { applyLiveEngineSettings(it) }
-        _state.update { it.copy(mtConnected = true, mtError = null) }
+    fun selectSymbol(symbol: String) {
+        _state.update { it.copy(selectedSymbol = symbol, klines = emptyList(), footprints = emptyList()) }
+        startDataStreams(symbol, _state.value.selectedTimeframe)
     }
 
-    private fun startMtPoller() = viewModelScope.launch(Dispatchers.IO) {
-        while (true) {
-            delay(10_000)
-            refreshMtAccount()
-        }
+    fun selectTimeframe(tf: String) {
+        _state.update { it.copy(selectedTimeframe = tf, klines = emptyList(), footprints = emptyList()) }
+        startDataStreams(_state.value.selectedSymbol, tf)
     }
+
+    private fun startDataStreams(symbol: String, tf: String) {
+        liveKlinesJob?.cancel()
+        closedKlinesJob?.cancel()
+        aggTradesJob?.cancel()
+        repo = BinanceRepository(symbol.lowercase(), tf)
+        window.clear(); liveLevels.clear()
+        fpDeque.clear(); cvdDeque.clear(); adxDeque.clear()
+        viewModelScope.launch(Dispatchers.IO) { loadHistory() }
+        liveKlinesJob   = collectLiveKlines()
+        closedKlinesJob = collectClosedKlines()
+        aggTradesJob    = collectAggTrades()
+    }
+
+    // ── TV webhook poller ─────────────────────────────────────────────────────
 
     private fun startTvPoller() = viewModelScope.launch(Dispatchers.IO) {
         while (true) {
@@ -174,7 +186,7 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             if (key.isBlank()) continue
             try {
                 val sig = repo.fetchTvSignal(key) ?: continue
-                if (sig.receivedAt <= lastTvReceivedAt) continue   // already processed
+                if (sig.receivedAt <= lastTvReceivedAt) continue
                 lastTvReceivedAt = sig.receivedAt
                 paperEngine.onTvSignal(
                     action    = sig.action,
@@ -187,37 +199,77 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun resetPaperAccount() { paperEngine.reset(); _state.update { it.copy(paperAccount = paperEngine.state) } }
-
-    private suspend fun refreshMtAccount() {
-        val client = mtClient ?: return
-        try {
-            val acct      = client.getAccountInfo()
-            val positions = client.getPositions()
-            val deals     = client.getDeals()
+    private fun startVpsSignalCollector() = viewModelScope.launch(Dispatchers.IO) {
+        vpsClient.signals.collect { sig ->
             _state.update { it.copy(
-                mtAccount   = acct,
-                mtPositions = positions,
-                mtDeals     = deals,
-                mtError     = liveEngine?.lastError,
+                vpsSignal       = sig,
+                vpsConnected    = true,
+                confluenceScore = sig.confluenceScore,
+                confluenceMax   = sig.confluenceMax,
+                tfSignals       = sig.tfSignals,
             ) }
-        } catch (e: Exception) {
-            _state.update { it.copy(mtError = e.message) }
         }
     }
+
+    // ── Scanner / 24h ticker poller ───────────────────────────────────────────
+
+    private val scannerSymbols = listOf("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT")
+
+    private fun startScannerPoller() = viewModelScope.launch(Dispatchers.IO) {
+        while (true) {
+            // 24h ticker for the currently selected symbol
+            try {
+                val t = repo.fetchTicker24h(_state.value.selectedSymbol)
+                _state.update { it.copy(ticker24h = t) }
+            } catch (_: Exception) {}
+
+            // Market scanner — prefer VPS /scanner endpoint, fall back to Binance prices
+            val apiUrl = settings.vpsApiUrl.trimEnd('/')
+            if (apiUrl.isNotBlank()) {
+                try {
+                    val raw  = repo.vpsGet("$apiUrl/scanner")
+                    val arr  = JSONArray(raw)
+                    val rows = (0 until arr.length()).map { i ->
+                        val j = arr.getJSONObject(i)
+                        ScannerRow(
+                            symbol        = j.optString("symbol", ""),
+                            price         = j.optDouble("price", 0.0),
+                            confluencePct = j.optInt("confluence_pct", 0),
+                            signal        = j.optString("signal", "NONE"),
+                        )
+                    }
+                    if (rows.isNotEmpty()) _state.update { it.copy(scannerRows = rows) }
+                } catch (_: Exception) { refreshScannerFromBinance() }
+            } else {
+                refreshScannerFromBinance()
+            }
+            delay(30_000)
+        }
+    }
+
+    private suspend fun refreshScannerFromBinance() {
+        val rows = scannerSymbols.mapNotNull { sym ->
+            try {
+                val t = repo.fetchTicker24h(sym)
+                val sig = when {
+                    t.priceChangePercent > 1.5  -> "LONG"
+                    t.priceChangePercent < -1.5 -> "SHORT"
+                    else                        -> "NONE"
+                }
+                // ponytail: confluence derived from price-change magnitude; replace with ML score when VPS available
+                val conf = minOf(100, (kotlin.math.abs(t.priceChangePercent) * 20).toInt())
+                ScannerRow(sym, t.highPrice, conf, sig)
+            } catch (_: Exception) { null }
+        }
+        if (rows.isNotEmpty()) _state.update { it.copy(scannerRows = rows) }
+    }
+
+    fun resetPaperAccount() { paperEngine.reset(); _state.update { it.copy(paperAccount = paperEngine.state) } }
 
     // ── Settings ──────────────────────────────────────────────────────────────
 
     private fun applySettingsToEngines() {
         engine.setThresholds(settings.shortThresh, settings.longThresh)
-        liveEngine?.let { applyLiveEngineSettings(it) }
-    }
-
-    private fun applyLiveEngineSettings(e: LiveTradeEngine) {
-        e.enableLong    = settings.enableLong
-        e.riskPct       = settings.riskPct.toDouble()
-        e.slAtrMult     = settings.slAtrMult
-        e.tradingSymbol = settings.tradingSymbol
     }
 
     private fun currentSettingsState() = AppSettingsState(
@@ -227,11 +279,18 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         slAtrMult        = settings.slAtrMult,
         enableLong       = settings.enableLong,
         maxDrawdownPct   = settings.maxDrawdownPct,
-        metaApiToken     = settings.metaApiToken,
-        metaApiAccountId = settings.metaApiAccountId,
-        metaApiRegion    = settings.metaApiRegion,
-        tradingSymbol    = settings.tradingSymbol,
         tvWebhookKey     = settings.tvWebhookKey,
+        vpsWsUrl         = settings.vpsWsUrl,
+        vpsApiUrl        = settings.vpsApiUrl,
+        liveExchange     = settings.liveExchange,
+        binanceApiKey    = settings.binanceApiKey,
+        binanceApiSecret = settings.binanceApiSecret,
+        hlPrivateKey     = settings.hlPrivateKey,
+        bybitApiKey      = settings.bybitApiKey,
+        bybitApiSecret   = settings.bybitApiSecret,
+        okxApiKey        = settings.okxApiKey,
+        okxApiSecret     = settings.okxApiSecret,
+        okxPassphrase    = settings.okxPassphrase,
     )
 
     fun updateSettings(s: AppSettingsState) {
@@ -241,13 +300,20 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
         settings.slAtrMult        = s.slAtrMult
         settings.enableLong       = s.enableLong
         settings.maxDrawdownPct   = s.maxDrawdownPct
-        settings.metaApiToken     = s.metaApiToken
-        settings.metaApiAccountId = s.metaApiAccountId
-        settings.metaApiRegion    = s.metaApiRegion
-        settings.tradingSymbol    = s.tradingSymbol
         settings.tvWebhookKey     = s.tvWebhookKey
-        connectMetaApi()
+        settings.vpsWsUrl         = s.vpsWsUrl
+        settings.vpsApiUrl        = s.vpsApiUrl
+        settings.liveExchange     = s.liveExchange
+        settings.binanceApiKey    = s.binanceApiKey
+        settings.binanceApiSecret = s.binanceApiSecret
+        settings.hlPrivateKey     = s.hlPrivateKey
+        settings.bybitApiKey      = s.bybitApiKey
+        settings.bybitApiSecret   = s.bybitApiSecret
+        settings.okxApiKey        = s.okxApiKey
+        settings.okxApiSecret     = s.okxApiSecret
+        settings.okxPassphrase    = s.okxPassphrase
         applySettingsToEngines()
+        if (s.vpsWsUrl.isNotBlank()) vpsClient.connect(s.vpsWsUrl)
         _state.update { it.copy(appSettings = s) }
     }
 
@@ -305,13 +371,12 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
                 val out = engine.infer(features)
 
                 val atrPct = features[23]
-                liveEngine?.onSignal(out.signal, kline.close, atrPct)
                 if (out.signal != Signal.NEUTRAL) notifySignal(out.signal, kline.close)
                 try { repo.sendTradingSignal(out.signal.name, kline.close, kline.openTime) } catch (_: Exception) {}
 
-                val adxVal   = features[17] * 100f
-                val plusDi   = features[18]
-                val minusDi  = features[19]
+                val adxVal  = features[17] * 100f
+                val plusDi  = features[18]
+                val minusDi = features[19]
                 mu.withLock {
                     adxDeque.addLast(AdxPoint(adxVal, plusDi, minusDi))
                     if (adxDeque.size > 21) adxDeque.removeFirst()
@@ -380,9 +445,10 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun notifySignal(signal: Signal, price: Double) {
         val ctx = getApplication<Application>()
+        val sym = _state.value.selectedSymbol
         val (title, text) = when (signal) {
-            Signal.LONG  -> "▲ LONG Signal"  to "ETH/USDT \$%.1f".format(price)
-            Signal.SHORT -> "▼ SHORT Signal" to "ETH/USDT \$%.1f".format(price)
+            Signal.LONG  -> "▲ LONG Signal"  to "$sym \$%.1f".format(price)
+            Signal.SHORT -> "▼ SHORT Signal" to "$sym \$%.1f".format(price)
             else -> return
         }
         nm.notify(signal.ordinal, Notification.Builder(ctx, "signals")
@@ -393,8 +459,29 @@ class ChartViewModel(app: Application) : AndroidViewModel(app) {
             .build())
     }
 
-    /** Force-refresh MT5 account (Portfolio screen) */
-    fun refreshMt() = viewModelScope.launch(Dispatchers.IO) { refreshMtAccount() }
+    /** POST /promote?exchange=X to VPS — only succeeds when canPromote=true */
+    fun promoteLive() = viewModelScope.launch(Dispatchers.IO) {
+        val base = settings.vpsApiUrl.trimEnd('/')
+        val exch = settings.liveExchange
+        if (base.isBlank()) return@launch
+        try {
+            val creds = buildString {
+                when (exch) {
+                    "binance"     -> append("binance_api_key=${settings.binanceApiKey}&binance_api_secret=${settings.binanceApiSecret}")
+                    "hyperliquid" -> append("hl_private_key=${settings.hlPrivateKey}")
+                    "bybit"       -> append("bybit_api_key=${settings.bybitApiKey}&bybit_api_secret=${settings.bybitApiSecret}")
+                    "okx"         -> append("okx_api_key=${settings.okxApiKey}&okx_api_secret=${settings.okxApiSecret}&okx_passphrase=${settings.okxPassphrase}")
+                }
+            }
+            repo.vpsPost("$base/promote?exchange=$exch&$creds")
+        } catch (_: Exception) {}
+    }
+
+    fun demoteLive() = viewModelScope.launch(Dispatchers.IO) {
+        val base = settings.vpsApiUrl.trimEnd('/')
+        if (base.isBlank()) return@launch
+        try { repo.vpsPost("$base/demote") } catch (_: Exception) {}
+    }
 
     override fun onCleared() { super.onCleared(); engine.close() }
 }

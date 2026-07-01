@@ -24,6 +24,15 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 
+data class Ticker24h(
+    val highPrice:          Double = 0.0,
+    val lowPrice:           Double = 0.0,
+    val volume:             Double = 0.0,
+    val quoteVolume:        Double = 0.0,
+    val priceChangePercent: Double = 0.0,
+    val priceChange:        Double = 0.0,
+)
+
 data class TvSignal(
     val action:     String,
     val symbol:     String,
@@ -102,6 +111,35 @@ class BinanceRepository(
             time       = j.optString("time", ""),
             receivedAt = j.optLong("receivedAt", 0L),
         )
+    }
+
+    /** Generic GET to any URL (VPS scanner, etc.). Returns response body as String. */
+    suspend fun vpsGet(url: String): String = withContext(Dispatchers.IO) {
+        okhttp.newCall(Request.Builder().url(url).build()).execute().use { r ->
+            if (!r.isSuccessful) throw IOException("vpsGet $url → ${r.code}")
+            r.body?.string() ?: "[]"
+        }
+    }
+
+    suspend fun fetchTicker24h(symbol: String): Ticker24h = withContext(Dispatchers.IO) {
+        val url = "https://api.binance.com/api/v3/ticker/24hr?symbol=${symbol.uppercase()}"
+        val body = okhttp.newCall(Request.Builder().url(url).build()).execute().body!!.string()
+        val j = JSONObject(body)
+        Ticker24h(
+            highPrice          = j.getString("highPrice").toDouble(),
+            lowPrice           = j.getString("lowPrice").toDouble(),
+            volume             = j.getString("volume").toDouble(),
+            quoteVolume        = j.getString("quoteVolume").toDouble(),
+            priceChangePercent = j.getString("priceChangePercent").toDouble(),
+            priceChange        = j.getString("priceChange").toDouble(),
+        )
+    }
+
+    /** Generic POST to a VPS endpoint (promote/demote). Body is empty. */
+    suspend fun vpsPost(url: String) = withContext(Dispatchers.IO) {
+        okhttp.newCall(
+            Request.Builder().url(url).post("".toRequestBody()).build()
+        ).execute().use { if (!it.isSuccessful) throw java.io.IOException("vpsPost $url → ${it.code}") }
     }
 
     suspend fun getAccountStatus(): String = withContext(Dispatchers.IO) {

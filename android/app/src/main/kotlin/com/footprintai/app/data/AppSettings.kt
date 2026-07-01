@@ -34,27 +34,58 @@ class AppSettings(ctx: Context) {
         get() = prefs.getFloat("maxDrawdownPct", 0.30f)
         set(v) { prefs.edit().putFloat("maxDrawdownPct", v).apply() }
 
-    // ── MetaApi credentials ───────────────────────────────────────────────────
-    var metaApiToken: String
-        get() = prefs.getString("metaApiToken", "") ?: ""
-        set(v) { prefs.edit().putString("metaApiToken", v).apply() }
-
-    var metaApiAccountId: String
-        get() = prefs.getString("metaApiAccountId", "") ?: ""
-        set(v) { prefs.edit().putString("metaApiAccountId", v).apply() }
-
-    var metaApiRegion: String
-        get() = prefs.getString("metaApiRegion", "new-york") ?: "new-york"
-        set(v) { prefs.edit().putString("metaApiRegion", v).apply() }
-
-    /** MT5 symbol to execute on (e.g. ETHUSD, XAUUSD, EURUSD) */
-    var tradingSymbol: String
-        get() = prefs.getString("tradingSymbol", "ETHUSD") ?: "ETHUSD"
-        set(v) { prefs.edit().putString("tradingSymbol", v).apply() }
-
     // ── TradingView webhook ────────────────────────────────────────────────────
     /** User-chosen key for the TV webhook — matches ?key= in the URL */
     var tvWebhookKey: String
         get() = prefs.getString("tvWebhookKey", "") ?: ""
         set(v) { prefs.edit().putString("tvWebhookKey", v).apply() }
+
+    // ── VPS Signal Server ─────────────────────────────────────────────────────
+    /** WebSocket URL, e.g. ws://1.2.3.4:8001/ws */
+    var vpsWsUrl: String
+        get() = prefs.getString("vpsWsUrl", "") ?: ""
+        set(v) { prefs.edit().putString("vpsWsUrl", v).apply() }
+
+    /** REST base URL, e.g. http://1.2.3.4:8001 */
+    var vpsApiUrl: String
+        get() = prefs.getString("vpsApiUrl", "") ?: ""
+        set(v) { prefs.edit().putString("vpsApiUrl", v).apply() }
+
+    // ── Exchange for live trading ─────────────────────────────────────────────
+    /** binance | hyperliquid | bybit | okx */
+    var liveExchange: String
+        get() = prefs.getString("liveExchange", "binance") ?: "binance"
+        set(v) { prefs.edit().putString("liveExchange", v).apply() }
+
+    // Binance Futures
+    var binanceApiKey: String
+        get() = prefs.getString("binanceApiKey", "") ?: ""
+        set(v) { prefs.edit().putString("binanceApiKey", v).apply() }
+    var binanceApiSecret: String
+        get() = prefs.getString("binanceApiSecret", "") ?: ""
+        set(v) { prefs.edit().putString("binanceApiSecret", v).apply() }
+
+    // Hyperliquid
+    var hlPrivateKey: String
+        get() = prefs.getString("hlPrivateKey", "") ?: ""
+        set(v) { prefs.edit().putString("hlPrivateKey", v).apply() }
+
+    // Bybit V5
+    var bybitApiKey: String
+        get() = prefs.getString("bybitApiKey", "") ?: ""
+        set(v) { prefs.edit().putString("bybitApiKey", v).apply() }
+    var bybitApiSecret: String
+        get() = prefs.getString("bybitApiSecret", "") ?: ""
+        set(v) { prefs.edit().putString("bybitApiSecret", v).apply() }
+
+    // OKX
+    var okxApiKey: String
+        get() = prefs.getString("okxApiKey", "") ?: ""
+        set(v) { prefs.edit().putString("okxApiKey", v).apply() }
+    var okxApiSecret: String
+        get() = prefs.getString("okxApiSecret", "") ?: ""
+        set(v) { prefs.edit().putString("okxApiSecret", v).apply() }
+    var okxPassphrase: String
+        get() = prefs.getString("okxPassphrase", "") ?: ""
+        set(v) { prefs.edit().putString("okxPassphrase", v).apply() }
 }

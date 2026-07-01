@@ -33,12 +33,22 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
     var slAtrMult      by remember(s) { mutableFloatStateOf(s.slAtrMult) }
     var enableLong     by remember(s) { mutableStateOf(s.enableLong) }
     var maxDrawdownPct by remember(s) { mutableFloatStateOf(s.maxDrawdownPct * 100f) }
-    var metaToken      by remember(s) { mutableStateOf(s.metaApiToken) }
-    var metaAccountId  by remember(s) { mutableStateOf(s.metaApiAccountId) }
-    var metaRegion     by remember(s) { mutableStateOf(s.metaApiRegion) }
-    var tradingSymbol  by remember(s) { mutableStateOf(s.tradingSymbol) }
     var tvKey          by remember(s) { mutableStateOf(s.tvWebhookKey) }
-    var showToken      by remember { mutableStateOf(false) }
+    // VPS + exchange
+    var vpsWsUrl       by remember(s) { mutableStateOf(s.vpsWsUrl) }
+    var vpsApiUrl      by remember(s) { mutableStateOf(s.vpsApiUrl) }
+    var liveExchange   by remember(s) { mutableStateOf(s.liveExchange) }
+    var binanceKey     by remember(s) { mutableStateOf(s.binanceApiKey) }
+    var binanceSecret  by remember(s) { mutableStateOf(s.binanceApiSecret) }
+    var hlPrivKey      by remember(s) { mutableStateOf(s.hlPrivateKey) }
+    var bybitKey       by remember(s) { mutableStateOf(s.bybitApiKey) }
+    var bybitSecret    by remember(s) { mutableStateOf(s.bybitApiSecret) }
+    var okxKey         by remember(s) { mutableStateOf(s.okxApiKey) }
+    var okxSecret      by remember(s) { mutableStateOf(s.okxApiSecret) }
+    var okxPass        by remember(s) { mutableStateOf(s.okxPassphrase) }
+    var showSecrets    by remember { mutableStateOf(false) }
+    val exchanges      = listOf("binance", "hyperliquid", "bybit", "okx")
+    var exchExpanded   by remember { mutableStateOf(false) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(16.dp),
@@ -97,12 +107,13 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
             }
         }
 
-        // ── MetaApi credentials ───────────────────────────────────────────────
+        // ── VPS Signal Server ─────────────────────────────────────────────────
         item {
-            Text("MetaApi (MT5 Gateway)", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            Spacer(Modifier.height(4.dp))
+            Text("VPS Signal Server", fontWeight = FontWeight.Bold, fontSize = 18.sp)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Get free API token at metaapi.cloud. Supports any MT4/MT5 broker.",
+                "Connect to your VPS running signal_server.py. Paper trading runs on VPS; go live once ≥52% win rate over 50+ trades.",
                 fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, lineHeight = 17.sp,
             )
         }
@@ -110,69 +121,109 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
         item {
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    // Token
                     OutlinedTextField(
-                        value         = metaToken,
-                        onValueChange = { metaToken = it },
-                        label         = { Text("API Token") },
+                        value         = vpsWsUrl,
+                        onValueChange = { vpsWsUrl = it },
+                        label         = { Text("WebSocket URL") },
+                        placeholder   = { Text("ws://1.2.3.4:8001/ws") },
                         singleLine    = true,
-                        visualTransformation = if (showToken) VisualTransformation.None
-                                               else PasswordVisualTransformation(),
-                        trailingIcon  = {
-                            TextButton(onClick = { showToken = !showToken },
-                                contentPadding = PaddingValues(horizontal = 6.dp)) {
-                                Text(if (showToken) "Hide" else "Show", fontSize = 11.sp)
+                        modifier      = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedTextField(
+                        value         = vpsApiUrl,
+                        onValueChange = { vpsApiUrl = it },
+                        label         = { Text("REST API URL") },
+                        placeholder   = { Text("http://1.2.3.4:8001") },
+                        singleLine    = true,
+                        modifier      = Modifier.fillMaxWidth(),
+                    )
+
+                    // Exchange selector
+                    Text("Live Exchange", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                    Box {
+                        OutlinedButton(
+                            onClick  = { exchExpanded = true },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(liveExchange.replaceFirstChar { it.uppercase() })
+                        }
+                        DropdownMenu(expanded = exchExpanded, onDismissRequest = { exchExpanded = false }) {
+                            exchanges.forEach { ex ->
+                                DropdownMenuItem(
+                                    text    = { Text(ex.replaceFirstChar { it.uppercase() }) },
+                                    onClick = { liveExchange = ex; exchExpanded = false },
+                                )
                             }
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-
-                    // Account ID
-                    OutlinedTextField(
-                        value         = metaAccountId,
-                        onValueChange = { metaAccountId = it },
-                        label         = { Text("MT5 Account ID") },
-                        singleLine    = true,
-                        modifier      = Modifier.fillMaxWidth(),
-                    )
-
-                    // Region
-                    OutlinedTextField(
-                        value         = metaRegion,
-                        onValueChange = { metaRegion = it },
-                        label         = { Text("Region (e.g. new-york)") },
-                        singleLine    = true,
-                        modifier      = Modifier.fillMaxWidth(),
-                    )
-
-                    // Trading symbol
-                    OutlinedTextField(
-                        value         = tradingSymbol,
-                        onValueChange = { tradingSymbol = it.uppercase() },
-                        label         = { Text("MT5 Symbol (e.g. ETHUSD, XAUUSD, EURUSD)") },
-                        singleLine    = true,
-                        modifier      = Modifier.fillMaxWidth(),
-                    )
-
-                    Button(
-                        onClick  = {
-                            vm.updateSettings(s.copy(
-                                metaApiToken     = metaToken.trim(),
-                                metaApiAccountId = metaAccountId.trim(),
-                                metaApiRegion    = metaRegion.trim().ifBlank { "new-york" },
-                                tradingSymbol    = tradingSymbol.trim().ifBlank { "ETHUSD" },
-                            ))
-                        },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text("Connect MetaApi")
+                        }
                     }
 
-                    if (state.mtConnected) {
-                        Text("✓ Connected", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                    // Exchange-specific API keys
+                    val passViz = if (showSecrets) VisualTransformation.None else PasswordVisualTransformation()
+                    when (liveExchange) {
+                        "binance" -> {
+                            OutlinedTextField(value = binanceKey, onValueChange = { binanceKey = it },
+                                label = { Text("Binance API Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = binanceSecret, onValueChange = { binanceSecret = it },
+                                label = { Text("Binance API Secret") }, singleLine = true,
+                                visualTransformation = passViz, modifier = Modifier.fillMaxWidth())
+                        }
+                        "hyperliquid" -> {
+                            OutlinedTextField(value = hlPrivKey, onValueChange = { hlPrivKey = it },
+                                label = { Text("EVM Private Key (0x…)") }, singleLine = true,
+                                visualTransformation = passViz, modifier = Modifier.fillMaxWidth())
+                        }
+                        "bybit" -> {
+                            OutlinedTextField(value = bybitKey, onValueChange = { bybitKey = it },
+                                label = { Text("Bybit API Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = bybitSecret, onValueChange = { bybitSecret = it },
+                                label = { Text("Bybit API Secret") }, singleLine = true,
+                                visualTransformation = passViz, modifier = Modifier.fillMaxWidth())
+                        }
+                        "okx" -> {
+                            OutlinedTextField(value = okxKey, onValueChange = { okxKey = it },
+                                label = { Text("OKX API Key") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = okxSecret, onValueChange = { okxSecret = it },
+                                label = { Text("OKX API Secret") }, singleLine = true,
+                                visualTransformation = passViz, modifier = Modifier.fillMaxWidth())
+                            OutlinedTextField(value = okxPass, onValueChange = { okxPass = it },
+                                label = { Text("OKX Passphrase") }, singleLine = true,
+                                visualTransformation = passViz, modifier = Modifier.fillMaxWidth())
+                        }
                     }
-                    state.mtError?.let { err ->
-                        Text(err, color = MaterialTheme.colorScheme.error, fontSize = 11.sp)
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedButton(
+                            onClick  = { showSecrets = !showSecrets },
+                            modifier = Modifier.weight(1f),
+                        ) { Text(if (showSecrets) "Hide Keys" else "Show Keys", fontSize = 12.sp) }
+                        Button(
+                            onClick  = {
+                                vm.updateSettings(s.copy(
+                                    vpsWsUrl         = vpsWsUrl.trim(),
+                                    vpsApiUrl        = vpsApiUrl.trim(),
+                                    liveExchange     = liveExchange,
+                                    binanceApiKey    = binanceKey.trim(),
+                                    binanceApiSecret = binanceSecret.trim(),
+                                    hlPrivateKey     = hlPrivKey.trim(),
+                                    bybitApiKey      = bybitKey.trim(),
+                                    bybitApiSecret   = bybitSecret.trim(),
+                                    okxApiKey        = okxKey.trim(),
+                                    okxApiSecret     = okxSecret.trim(),
+                                    okxPassphrase    = okxPass.trim(),
+                                ))
+                            },
+                            modifier = Modifier.weight(1f),
+                        ) { Text("Save & Connect", fontSize = 12.sp) }
+                    }
+
+                    if (state.vpsConnected) {
+                        Text("✓ VPS Connected", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp)
+                        state.vpsSignal?.let { sig ->
+                            Text(
+                                "Paper: ${"%.0f".format(sig.paperWinRate)}% WR · ${sig.paperTrades} trades · ROI ${"%.1f".format(sig.paperRoiPct)}%",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
                 }
             }
@@ -259,7 +310,7 @@ fun SettingsScreen(vm: ChartViewModel = viewModel()) {
                     Column(Modifier.weight(1f)) {
                         Text("Enable LONG Trades", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                         Text(
-                            "Buy MT5 orders on LONG signals",
+                            "Enable LONG signals",
                             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
